@@ -5,7 +5,7 @@ import { Loader2 } from 'lucide-react';
 import clsx from 'clsx';
 import { invoke } from '@tauri-apps/api/core';
 import { ImageDimensions, useImageRenderSize } from '../../hooks/useImageRenderSize';
-import { Adjustments, AiPatch, Coord, MaskContainer } from '../../utils/adjustments';
+import { Adjustments, AiPatch, Coord, MaskContainer, ActiveChannel } from '../../utils/adjustments';
 import { calculateCenteredCrop, getOrientedDimensions } from '../../utils/cropUtils';
 import EditorToolbar from './editor/EditorToolbar';
 import ImageCanvas from './editor/ImageCanvas';
@@ -57,6 +57,11 @@ interface EditorProps {
   originalSize?: ImageDimensions;
   isWbPickerActive?: boolean;
   onWbPicked?: () => void;
+  isColorMixerTatPickerActive?: boolean;
+  onColorMixerTatPicked?: (selectedColor: string) => void;
+  isToneCurveTatPickerActive?: boolean;
+  onToneCurveTatPicked?: (channel: ActiveChannel, value: number) => void;
+  activeCurveChannel?: ActiveChannel;
   overlayMode?: OverlayMode;
   overlayRotation?: number;
   adjustmentsHistory: any[];
@@ -109,6 +114,11 @@ export default function Editor({
   originalSize,
   isWbPickerActive = false,
   onWbPicked,
+  isColorMixerTatPickerActive = false,
+  onColorMixerTatPicked,
+  isToneCurveTatPickerActive = false,
+  onToneCurveTatPicked,
+  activeCurveChannel,
   overlayMode = 'none',
   overlayRotation = 0,
   adjustmentsHistory,
@@ -604,7 +614,7 @@ export default function Editor({
       const wrapper = transformWrapperRef.current;
       if (!wrapper) return;
 
-      if (isCropping || isMasking || isAiEditing || isWbPickerActive) return;
+      if (isCropping || isMasking || isAiEditing || isWbPickerActive || isColorMixerTatPickerActive || isToneCurveTatPickerActive) return;
 
       if (mouseDownPos.current) {
         const dx = Math.abs(e.clientX - mouseDownPos.current.x);
@@ -670,7 +680,7 @@ export default function Editor({
         }
       }
     },
-    [isCropping, isMasking, isAiEditing, isWbPickerActive, transformWrapperRef, transformConfig.maxScale],
+    [isCropping, isMasking, isAiEditing, isWbPickerActive, isColorMixerTatPickerActive, isToneCurveTatPickerActive, transformWrapperRef, transformConfig.maxScale],
   );
 
   if (!selectedImage) {
@@ -714,7 +724,7 @@ export default function Editor({
         activeSubMask?.type === Mask.Luminance ||
         activeSubMask?.parameters?.isInitialDraw));
 
-  const isZoomActionActive = !isCropping && !isMasking && !isAiEditing && !isWbPickerActive;
+  const isZoomActionActive = !isCropping && !isMasking && !isAiEditing && !isWbPickerActive && !isColorMixerTatPickerActive && !isToneCurveTatPickerActive;
   const isMaxZoom = transformState.scale >= transformConfig.maxScale - 0.5;
 
   let cursorStyle = 'default';
@@ -844,6 +854,11 @@ export default function Editor({
               updateSubMask={updateSubMask}
               isWbPickerActive={isWbPickerActive}
               onWbPicked={onWbPicked}
+              isColorMixerTatPickerActive={isColorMixerTatPickerActive}
+              onColorMixerTatPicked={onColorMixerTatPicked}
+              isToneCurveTatPickerActive={isToneCurveTatPickerActive}
+              onToneCurveTatPicked={onToneCurveTatPicked}
+              activeCurveChannel={activeCurveChannel}
               setAdjustments={setAdjustments}
               overlayRotation={overlayRotation}
               overlayMode={overlayMode}

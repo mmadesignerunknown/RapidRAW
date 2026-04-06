@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { RotateCcw, Copy, ClipboardPaste } from 'lucide-react';
+import { RotateCcw, Copy, ClipboardPaste, Pipette } from 'lucide-react';
 import { ActiveChannel, Adjustments, Coord } from '../../utils/adjustments';
 import { Theme, OPTION_SEPARATOR } from '../ui/AppProperties';
 import { useContextMenu } from '../../context/ContextMenuContext';
@@ -29,6 +29,11 @@ interface CurveGraphProps {
   setAdjustments(updater: (prev: any) => any): void;
   theme: string;
   onDragStateChange?: (isDragging: boolean) => void;
+  activeChannel?: ActiveChannel;
+  setActiveChannel?: (channel: ActiveChannel) => void;
+  isToneCurveTatPickerActive?: boolean;
+  toggleToneCurveTatPicker?: () => void;
+  toneCurveTatPickedValue?: { channel: ActiveChannel; value: number } | null;
 }
 
 function getCurvePath(points: Array<Coord>) {
@@ -156,9 +161,18 @@ export default function CurveGraph({
   theme,
   isForMask,
   onDragStateChange,
+  activeChannel: externalActiveChannel,
+  setActiveChannel: externalSetActiveChannel,
+  isToneCurveTatPickerActive,
+  toggleToneCurveTatPicker,
+  toneCurveTatPickedValue,
 }: CurveGraphProps) {
   const { showContextMenu } = useContextMenu();
-  const [activeChannel, setActiveChannel] = useState<ActiveChannel>(ActiveChannel.Luma);
+  
+  // Use external activeChannel if provided, otherwise use local state
+  const [localActiveChannel, setLocalActiveChannel] = useState<ActiveChannel>(ActiveChannel.Luma);
+  const activeChannel = externalActiveChannel ?? localActiveChannel;
+  const setActiveChannelLocal = externalSetActiveChannel ?? setLocalActiveChannel;
   const [draggingPointIndex, setDraggingPointIndex] = useState<number | null>(null);
   const [localPoints, setLocalPoints] = useState<Array<Coord> | null>(null);
   const [isHovered, setIsHovered] = useState(false);
@@ -193,6 +207,67 @@ export default function CurveGraph({
     onDragStateChange?.(isDragging);
     draggingIndexRef.current = draggingPointIndex;
   }, [draggingPointIndex, onDragStateChange]);
+
+  // Handle TAT picker value - add point to curve at detected input value
+  useEffect(() => {
+    if (!toneCurveTatPickedValue) return;
+    if (toneCurveTatPickedValue.channel !== activeChannel) return;
+
+    const propPoints = adjustments?.curves?.[activeChannel];
+    if (!propPoints) return;
+
+    const inputValue = toneCurveTatPickedValue.value;
+    
+    // Clamp to valid range
+    const clampedInputValue = Math.max(0, Math.min(255, inputValue));
+    
+    // Check if a point already exists at this x position (within 8 units)
+    const existingPoint = propPoints.find((p) => Math.abs(p.x - clampedInputValue) < 8);
+    if (existingPoint) {
+      // Point already exists, just return
+      return;
+    }
+
+    // Find where the curve currently is at this input value using interpolation
+    let outputValue = inputValue;
+
+    if (propPoints.length >= 2) {
+      // Find the two points that bracket this input value
+      let before = null;
+      let after = null;
+
+      for (let i = 0; i < propPoints.length - 1; i++) {
+        if (propPoints[i].x <= inputValue && propPoints[i + 1].x >= inputValue) {
+          before = propPoints[i];
+          after = propPoints[i + 1];
+          break;
+        }
+      }
+
+      if (before && after) {
+        // Linear interpolation between the two points
+        const t = (inputValue - before.x) / (after.x - before.x);
+        outputValue = before.y + t * (after.y - before.y);
+      } else if (inputValue < propPoints[0].x) {
+        outputValue = propPoints[0].y;
+      } else if (inputValue > propPoints[propPoints.length - 1].x) {
+        outputValue = propPoints[propPoints.length - 1].y;
+      }
+    }
+
+    // Add the new point
+    const newPoints = [...propPoints, { x: inputValue, y: outputValue }].sort(
+      (a: Coord, b: Coord) => a.x - b.x,
+    );
+
+    setLocalPoints(newPoints);
+    localPointsRef.current = newPoints;
+
+    setAdjustments((prev: Adjustments) => ({
+      ...prev,
+      curves: { ...prev.curves, [activeChannel]: newPoints },
+    }));
+  }, [toneCurveTatPickedValue, activeChannel, setAdjustments]);
 
   useEffect(() => {
     const handleGlobalMouseMove = (e: MouseEvent) => {
@@ -485,7 +560,9 @@ export default function CurveGraph({
               }
               ${channel === ActiveChannel.Luma ? 'text-text-primary' : ''}`}
               key={channel}
-              onClick={() => setActiveChannel(channel as ActiveChannel)}
+              onClick={() => {
+                setActiveChannelLocal(channel as ActiveChannel);
+              }}
               style={{
                 backgroundColor:
                   channel !== ActiveChannel.Luma && activeChannel !== channel
@@ -499,6 +576,17 @@ export default function CurveGraph({
             </button>
           ))}
         </div>
+        {toggleToneCurveTatPicker && (
+          <button
+            onClick={toggleToneCurveTatPicker}
+            className={`p-1.5 rounded-md transition-colors ${
+              isToneCurveTatPickerActive ? 'bg-accent text-button-text' : 'bg-surface-secondary hover:bg-surface-tertiary'
+            }`}
+            data-tooltip="Tone Curve TAT Picker"
+          >
+            <Pipette size={16} />
+          </button>
+        )}
       </div>
 
       <div

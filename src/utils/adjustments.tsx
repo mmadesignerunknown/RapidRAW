@@ -691,3 +691,97 @@ export const ADJUSTMENT_SECTIONS: Sections = {
     Effect.VignetteRoundness,
   ],
 };
+
+// ========== Color Mixer TAT Picker Utilities ==========
+
+interface HslColorRange {
+  name: string;
+  center: number;
+  width: number;
+}
+
+// Color ranges matched to shader.wgsl HSL_RANGES
+export const HSL_COLOR_RANGES: HslColorRange[] = [
+  { name: 'reds', center: 358.0, width: 35.0 },
+  { name: 'oranges', center: 25.0, width: 45.0 },
+  { name: 'yellows', center: 60.0, width: 40.0 },
+  { name: 'greens', center: 115.0, width: 90.0 },
+  { name: 'aquas', center: 180.0, width: 60.0 },
+  { name: 'blues', center: 225.0, width: 60.0 },
+  { name: 'purples', center: 280.0, width: 55.0 },
+  { name: 'magentas', center: 330.0, width: 50.0 },
+];
+
+/**
+ * Calculate HSL influence for a given hue and color range
+ * Uses the same algorithm as get_raw_hsl_influence() in shader.wgsl
+ */
+export function getHslInfluence(hue: number, center: number, width: number): number {
+  const dist = Math.min(Math.abs(hue - center), 360.0 - Math.abs(hue - center));
+  const sharpness = 1.5;
+  const falloff = dist / (width * 0.5);
+  return Math.exp(-sharpness * falloff * falloff);
+}
+
+/**
+ * Find the closest color range for a given hue
+ * Returns the color name (reds, oranges, yellows, etc.)
+ */
+export function getColorNameFromHue(hue: number): string {
+  let maxInfluence = 0;
+  let closestColor = 'reds';
+
+  for (const range of HSL_COLOR_RANGES) {
+    const influence = getHslInfluence(hue, range.center, range.width);
+    if (influence > maxInfluence) {
+      maxInfluence = influence;
+      closestColor = range.name;
+    }
+  }
+
+  return closestColor;
+}
+
+/**
+ * Convert RGB values to HSV (Hue, Saturation, Value)
+ * Returns hue in degrees (0-360), saturation and value as 0-1
+ */
+export function rgbToHsv(r: number, g: number, b: number): { h: number; s: number; v: number } {
+  r /= 255;
+  g /= 255;
+  b /= 255;
+
+  const cMax = Math.max(r, g, b);
+  const cMin = Math.min(r, g, b);
+  const delta = cMax - cMin;
+
+  let h = 0;
+  if (delta !== 0) {
+    if (cMax === r) {
+      h = ((g - b) / delta) % 6;
+    } else if (cMax === g) {
+      h = (b - r) / delta + 2;
+    } else {
+      h = (r - g) / delta + 4;
+    }
+    h *= 60;
+  }
+
+  if (h < 0) h += 360;
+
+  const s = cMax === 0 ? 0 : delta / cMax;
+  const v = cMax;
+
+  return { h, s, v };
+}
+
+/**
+ * Calculate luma (perceived brightness) from RGB values
+ * Uses ITU-R BT.709 standard
+ * Returns value 0-255 matching tone curve input range
+ */
+export function rgbToLuma(r: number, g: number, b: number): number {
+  // ITU-R BT.709 luma coefficients
+  const luma = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  return Math.round(Math.max(0, Math.min(255, luma)));
+}

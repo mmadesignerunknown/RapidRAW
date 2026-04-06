@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Pipette } from 'lucide-react';
 import Slider from '../ui/Slider';
 import ColorWheel from '../ui/ColorWheel';
@@ -20,6 +20,9 @@ interface ColorPanelProps {
   isForMask?: boolean;
   isWbPickerActive?: boolean;
   toggleWbPicker?: () => void;
+  isColorMixerTatPickerActive?: boolean;
+  toggleColorMixerTatPicker?: () => void;
+  colorMixerTATSelection?: string | null;
   onDragStateChange?: (isDragging: boolean) => void;
 }
 
@@ -298,10 +301,20 @@ export default function ColorPanel({
   isForMask = false,
   isWbPickerActive = false,
   toggleWbPicker,
+  isColorMixerTatPickerActive = false,
+  toggleColorMixerTatPicker,
+  colorMixerTATSelection,
   onDragStateChange,
 }: ColorPanelProps) {
   const [activeColor, setActiveColor] = useState('reds');
   const adjustmentVisibility = appSettings?.adjustmentVisibility || {};
+
+  // When TAT picker selects a color, update the active color
+  useEffect(() => {
+    if (colorMixerTATSelection) {
+      setActiveColor(colorMixerTATSelection);
+    }
+  }, [colorMixerTATSelection]);
 
   const handleGlobalChange = (key: ColorAdjustment, value: string) => {
     setAdjustments((prev: Partial<Adjustments>) => ({ ...prev, [key]: parseFloat(value) }));
@@ -398,9 +411,20 @@ export default function ColorPanel({
       </div>
 
       <div className="p-2 bg-bg-tertiary rounded-md">
-        <Text variant={TextVariants.heading} className="mb-3">
-          Color Mixer
-        </Text>
+        <div className="flex justify-between items-center mb-3">
+          <Text variant={TextVariants.heading}>Color Mixer</Text>
+          {!isForMask && toggleColorMixerTatPicker && (
+            <button
+              onClick={toggleColorMixerTatPicker}
+              className={`p-1.5 rounded-md transition-colors ${
+                isColorMixerTatPickerActive ? 'bg-accent text-button-text' : 'hover:bg-bg-secondary text-text-secondary'
+              }`}
+              data-tooltip="Color Mixer TAT Picker"
+            >
+              <Pipette size={16} />
+            </button>
+          )}
+        </div>
         <div className="flex justify-between mb-4 px-1">
           {HSL_COLORS.map(({ name, color }) => (
             <ColorSwatch

@@ -86,6 +86,7 @@ import {
   normalizeLoadedAdjustments,
   PasteMode,
   CopyPasteSettings,
+  ActiveChannel,
 } from './utils/adjustments';
 import { calculateCenteredCrop } from './utils/cropUtils';
 import { generatePaletteFromImage } from './utils/palette';
@@ -375,6 +376,11 @@ function App() {
   const [copiedAdjustments, setCopiedAdjustments] = useState<Adjustments | null>(null);
   const [isStraightenActive, setIsStraightenActive] = useState(false);
   const [isWbPickerActive, setIsWbPickerActive] = useState(false);
+  const [isColorMixerTatPickerActive, setIsColorMixerTatPickerActive] = useState(false);
+  const [colorMixerTATSelection, setColorMixerTATSelection] = useState<string | null>(null);
+  const [isToneCurveTatPickerActive, setIsToneCurveTatPickerActive] = useState(false);
+  const [toneCurveTatPickedValue, setToneCurveTatPickedValue] = useState<{ channel: ActiveChannel; value: number } | null>(null);
+  const [activeCurveChannel, setActiveCurveChannel] = useState<ActiveChannel>(ActiveChannel.Luma);
   const [liveRotation, setLiveRotation] = useState<number | null>(null);
   const [copiedFilePaths, setCopiedFilePaths] = useState<Array<string>>([]);
   const [aiModelDownloadStatus, setAiModelDownloadStatus] = useState<string | null>(null);
@@ -592,10 +598,47 @@ function App() {
 
   const toggleWbPicker = useCallback(() => {
     setIsWbPickerActive((prev) => !prev);
-  }, []);
+    // Ensure only one picker is active at a time
+    if (!isWbPickerActive) {
+      setIsColorMixerTatPickerActive(false);
+      setIsToneCurveTatPickerActive(false);
+    }
+  }, [isWbPickerActive]);
 
   const handleWbPicked = useCallback(() => {
     //setIsWbPickerActive(false); // lets keep it active
+  }, []);
+
+  const toggleColorMixerTatPicker = useCallback(() => {
+    setIsColorMixerTatPickerActive((prev) => !prev);
+    // Ensure only one picker is active at a time
+    if (!isColorMixerTatPickerActive) {
+      setIsWbPickerActive(false);
+      setIsToneCurveTatPickerActive(false);
+    }
+  }, [isColorMixerTatPickerActive]);
+
+  const handleColorMixerTatPicked = useCallback((selectedColor: string) => {
+    // Store the selected color for Color.tsx to watch
+    setColorMixerTATSelection(selectedColor);
+  }, []);
+
+  const toggleToneCurveTatPicker = useCallback(() => {
+    setIsToneCurveTatPickerActive((prev) => !prev);
+    // Ensure only one picker is active at a time
+    if (!isToneCurveTatPickerActive) {
+      setIsWbPickerActive(false);
+      setIsColorMixerTatPickerActive(false);
+    }
+  }, [isToneCurveTatPickerActive]);
+
+  const handleToneCurveTatPicked = useCallback((channel: ActiveChannel, value: number) => {
+    // Store the detected value for ControlsPanel to pass to Curves.tsx
+    setToneCurveTatPickedValue({ channel, value });
+    // Clear it after a short delay so it only processes once
+    setTimeout(() => {
+      setToneCurveTatPickedValue(null);
+    }, 50);
   }, []);
 
   useEffect(() => {
@@ -5095,6 +5138,12 @@ function App() {
               selectedImage={selectedImage}
               isWbPickerActive={isWbPickerActive}
               onWbPicked={handleWbPicked}
+              isColorMixerTatPickerActive={isColorMixerTatPickerActive}
+              onColorMixerTatPicked={handleColorMixerTatPicked}
+              isToneCurveTatPickerActive={isToneCurveTatPickerActive}
+              onToneCurveTatPicked={handleToneCurveTatPicked}
+              activeCurveChannel={activeCurveChannel}
+              setActiveCurveChannel={setActiveCurveChannel}
               setAdjustments={setAdjustments}
               setShowOriginal={setShowOriginal}
               showOriginal={showOriginal}
@@ -5217,6 +5266,14 @@ function App() {
                             appSettings={appSettings}
                             isWbPickerActive={isWbPickerActive}
                             toggleWbPicker={toggleWbPicker}
+                            isColorMixerTatPickerActive={isColorMixerTatPickerActive}
+                            toggleColorMixerTatPicker={toggleColorMixerTatPicker}
+                            colorMixerTATSelection={colorMixerTATSelection}
+                            isToneCurveTatPickerActive={isToneCurveTatPickerActive}
+                            toggleToneCurveTatPicker={toggleToneCurveTatPicker}
+                            toneCurveTatPickedValue={toneCurveTatPickedValue}
+                            activeCurveChannel={activeCurveChannel}
+                            setActiveCurveChannel={setActiveCurveChannel}
                             onDragStateChange={setIsSliderDragging}
                             isWaveformVisible={isWaveformVisible}
                             waveform={waveform}

@@ -10,7 +10,7 @@ import EffectsPanel from '../../adjustments/Effects';
 import CollapsibleSection from '../../ui/CollapsibleSection';
 import Waveform from '../editor/Waveform';
 import Resizer from '../../ui/Resizer';
-import { Adjustments, SectionVisibility, INITIAL_ADJUSTMENTS, ADJUSTMENT_SECTIONS } from '../../../utils/adjustments';
+import { Adjustments, SectionVisibility, INITIAL_ADJUSTMENTS, ADJUSTMENT_SECTIONS, ActiveChannel } from '../../../utils/adjustments';
 import { useContextMenu } from '../../../context/ContextMenuContext';
 import { OPTION_SEPARATOR, SelectedImage, AppSettings, WaveformData, Orientation } from '../../ui/AppProperties';
 import { ChannelConfig } from '../../adjustments/Curves';
@@ -38,6 +38,15 @@ interface ControlsProps {
   appSettings: AppSettings | null;
   isWbPickerActive?: boolean;
   toggleWbPicker?: () => void;
+  isColorMixerTatPickerActive?: boolean;
+  toggleColorMixerTatPicker?: () => void;
+  colorMixerTATSelection?: string | null;
+  onColorMixerTatPicked?: (selectedColor: string) => void;
+  isToneCurveTatPickerActive?: boolean;
+  toggleToneCurveTatPicker?: () => void;
+  toneCurveTatPickedValue?: { channel: ActiveChannel; value: number } | null;
+  activeCurveChannel?: ActiveChannel;
+  setActiveCurveChannel?: (channel: ActiveChannel) => void;
   onDragStateChange?: (isDragging: boolean) => void;
   isWaveformVisible?: boolean;
   onToggleWaveform?: () => void;
@@ -63,6 +72,15 @@ export default function Controls({
   appSettings,
   isWbPickerActive,
   toggleWbPicker,
+  isColorMixerTatPickerActive,
+  toggleColorMixerTatPicker,
+  colorMixerTATSelection,
+  onColorMixerTatPicked,
+  isToneCurveTatPickerActive,
+  toggleToneCurveTatPicker,
+  toneCurveTatPickedValue,
+  activeCurveChannel,
+  setActiveCurveChannel,
   onDragStateChange,
   isWaveformVisible,
   onToggleWaveform,
@@ -295,6 +313,14 @@ export default function Controls({
                   appSettings={appSettings}
                   isWbPickerActive={isWbPickerActive}
                   toggleWbPicker={toggleWbPicker}
+                  isColorMixerTatPickerActive={isColorMixerTatPickerActive}
+                  toggleColorMixerTatPicker={toggleColorMixerTatPicker}
+                  colorMixerTATSelection={colorMixerTATSelection}
+                  activeChannel={activeCurveChannel}
+                  setActiveChannel={setActiveCurveChannel}
+                  isToneCurveTatPickerActive={isToneCurveTatPickerActive}
+                  toggleToneCurveTatPicker={toggleToneCurveTatPicker}
+                  toneCurveTatPickedValue={toneCurveTatPickedValue}
                   onDragStateChange={onDragStateChange}
                 />
               </CollapsibleSection>

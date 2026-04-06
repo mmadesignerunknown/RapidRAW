@@ -3,7 +3,7 @@ import ReactCrop from 'react-image-crop';
 import 'react-image-crop/dist/ReactCrop.css';
 import { Stage, Layer, Ellipse, Line, Transformer, Group, Circle, Rect } from 'react-konva';
 import { PercentCrop, Crop } from 'react-image-crop';
-import { Adjustments, AiPatch, Coord, MaskContainer } from '../../../utils/adjustments';
+import { Adjustments, AiPatch, Coord, MaskContainer, getColorNameFromHue, rgbToHsv, rgbToLuma, ActiveChannel } from '../../../utils/adjustments';
 import { Mask, SubMask, SubMaskMode, ToolType } from '../right/Masks';
 import { BrushSettings, SelectedImage } from '../../ui/AppProperties';
 import { RenderSize } from '../../../hooks/useImageRenderSize';
@@ -58,6 +58,11 @@ interface ImageCanvasProps {
   interactivePatch?: { url: string; normX: number; normY: number; normW: number; normH: number } | null;
   isWbPickerActive?: boolean;
   onWbPicked?: () => void;
+  isColorMixerTatPickerActive?: boolean;
+  onColorMixerTatPicked?: (selectedColor: string) => void;
+  isToneCurveTatPickerActive?: boolean;
+  onToneCurveTatPicked?: (channel: ActiveChannel, value: number) => void;
+  activeCurveChannel?: ActiveChannel;
   setAdjustments(fn: (prev: Adjustments) => Adjustments): void;
   overlayMode?: OverlayMode;
   overlayRotation?: number;
@@ -729,6 +734,11 @@ const ImageCanvas = memo(
     updateSubMask,
     isWbPickerActive = false,
     onWbPicked,
+    isColorMixerTatPickerActive = false,
+    onColorMixerTatPicked,
+    isToneCurveTatPickerActive = false,
+    onToneCurveTatPicked,
+    activeCurveChannel,
     setAdjustments,
     overlayRotation,
     overlayMode,
@@ -1026,12 +1036,194 @@ const ImageCanvas = memo(
       [isWbPickerActive, finalPreviewUrl, imageRenderSize, onWbPicked, setAdjustments],
     );
 
+    const handleColorMixerTatClick = useCallback(
+      (e: any) => {
+        if (!isColorMixerTatPickerActive || !finalPreviewUrl || !onColorMixerTatPicked) return;
+
+        const stage = e.target.getStage();
+        const pointerPos = stage.getPointerPosition();
+        if (!pointerPos) return;
+
+        const x = pointerPos.x / imageRenderSize.scale;
+        const y = pointerPos.y / imageRenderSize.scale;
+
+        const imgLogicalWidth = imageRenderSize.width / imageRenderSize.scale;
+        const imgLogicalHeight = imageRenderSize.height / imageRenderSize.scale;
+
+        if (x < 0 || x > imgLogicalWidth || y < 0 || y > imgLogicalHeight) return;
+
+        const img = new Image();
+        img.crossOrigin = 'Anonymous';
+        img.src = finalPreviewUrl;
+
+        img.onload = () => {
+          const radius = 5;
+          const side = radius * 2 + 1;
+
+          const canvas = document.createElement('canvas');
+          canvas.width = side;
+          canvas.height = side;
+          const ctx = canvas.getContext('2d', { willReadFrequently: true });
+          if (!ctx) return;
+
+          const scaleX = img.width / imgLogicalWidth;
+          const scaleY = img.height / imgLogicalHeight;
+          const srcX = Math.floor(x * scaleX);
+          const srcY = Math.floor(y * scaleY);
+
+          const startX = Math.max(0, srcX - radius);
+          const startY = Math.max(0, srcY - radius);
+          const endX = Math.min(img.width, srcX + radius + 1);
+          const endY = Math.min(img.height, srcY + radius + 1);
+          const sw = endX - startX;
+          const sh = endY - startY;
+
+          if (sw <= 0 || sh <= 0) return;
+
+          ctx.drawImage(img, startX, startY, sw, sh, 0, 0, sw, sh);
+
+          const imageData = ctx.getImageData(0, 0, sw, sh);
+          const data = imageData.data;
+
+          let rTotal = 0,
+            gTotal = 0,
+            bTotal = 0;
+          let count = 0;
+
+          for (let i = 0; i < data.length; i += 4) {
+            rTotal += data[i];
+            gTotal += data[i + 1];
+            bTotal += data[i + 2];
+            count++;
+          }
+
+          if (count === 0) return;
+
+          const avgR = rTotal / count;
+          const avgG = gTotal / count;
+          const avgB = bTotal / count;
+
+          // Convert to HSV to get hue
+          const { h: hue } = rgbToHsv(avgR, avgG, avgB);
+
+          // Determine which color range this hue belongs to
+          const selectedColor = getColorNameFromHue(hue);
+
+          onColorMixerTatPicked(selectedColor);
+        };
+      },
+      [isColorMixerTatPickerActive, finalPreviewUrl, imageRenderSize, onColorMixerTatPicked],
+    );
+
+    const handleToneCurveTatClick = useCallback(
+      (e: any) => {
+        if (!isToneCurveTatPickerActive || !finalPreviewUrl || !onToneCurveTatPicked || !activeCurveChannel) return;
+
+        const stage = e.target.getStage();
+        const pointerPos = stage.getPointerPosition();
+        if (!pointerPos) return;
+
+        const x = pointerPos.x / imageRenderSize.scale;
+        const y = pointerPos.y / imageRenderSize.scale;
+
+        const imgLogicalWidth = imageRenderSize.width / imageRenderSize.scale;
+        const imgLogicalHeight = imageRenderSize.height / imageRenderSize.scale;
+
+        if (x < 0 || x > imgLogicalWidth || y < 0 || y > imgLogicalHeight) return;
+
+        const img = new Image();
+        img.crossOrigin = 'Anonymous';
+        img.src = finalPreviewUrl;
+
+        img.onload = () => {
+          const radius = 5;
+          const side = radius * 2 + 1;
+
+          const canvas = document.createElement('canvas');
+          canvas.width = side;
+          canvas.height = side;
+          const ctx = canvas.getContext('2d', { willReadFrequently: true });
+          if (!ctx) return;
+
+          const scaleX = img.width / imgLogicalWidth;
+          const scaleY = img.height / imgLogicalHeight;
+          const srcX = Math.floor(x * scaleX);
+          const srcY = Math.floor(y * scaleY);
+
+          const startX = Math.max(0, srcX - radius);
+          const startY = Math.max(0, srcY - radius);
+          const endX = Math.min(img.width, srcX + radius + 1);
+          const endY = Math.min(img.height, srcY + radius + 1);
+          const sw = endX - startX;
+          const sh = endY - startY;
+
+          if (sw <= 0 || sh <= 0) return;
+
+          ctx.drawImage(img, startX, startY, sw, sh, 0, 0, sw, sh);
+
+          const imageData = ctx.getImageData(0, 0, sw, sh);
+          const data = imageData.data;
+
+          let rTotal = 0,
+            gTotal = 0,
+            bTotal = 0;
+          let count = 0;
+
+          for (let i = 0; i < data.length; i += 4) {
+            rTotal += data[i];
+            gTotal += data[i + 1];
+            bTotal += data[i + 2];
+            count++;
+          }
+
+          if (count === 0) return;
+
+          const avgR = rTotal / count;
+          const avgG = gTotal / count;
+          const avgB = bTotal / count;
+
+          // Determine value based on active curve channel
+          let detectedValue: number;
+
+          switch (activeCurveChannel) {
+            case ActiveChannel.Luma:
+              detectedValue = rgbToLuma(avgR, avgG, avgB);
+              break;
+            case ActiveChannel.Red:
+              detectedValue = Math.round(avgR);
+              break;
+            case ActiveChannel.Green:
+              detectedValue = Math.round(avgG);
+              break;
+            case ActiveChannel.Blue:
+              detectedValue = Math.round(avgB);
+              break;
+            default:
+              return;
+          }
+
+          onToneCurveTatPicked(activeCurveChannel, detectedValue);
+        };
+      },
+      [isToneCurveTatPickerActive, finalPreviewUrl, imageRenderSize, onToneCurveTatPicked, activeCurveChannel],
+    );
+
     const handleMouseDown = useCallback(
       (e: any) => {
         e.evt.preventDefault();
 
         if (isWbPickerActive) {
           handleWbClick(e);
+          return;
+        }
+
+        if (isColorMixerTatPickerActive) {
+          handleColorMixerTatClick(e);
+          return;
+        }
+
+        if (isToneCurveTatPickerActive) {
+          handleToneCurveTatClick(e);
           return;
         }
 
@@ -1784,12 +1976,14 @@ const ImageCanvas = memo(
 
     const effectiveCursor = useMemo(() => {
       if (isWbPickerActive) return 'crosshair';
+      if (isColorMixerTatPickerActive) return 'crosshair';
+      if (isToneCurveTatPickerActive) return 'crosshair';
       if (isParametricActive) return 'crosshair';
       if (isInitialDrawing) return 'crosshair';
       if (isBrushActive) return 'none';
       if (isAiSubjectActive) return 'crosshair';
       return cursorStyle;
-    }, [isWbPickerActive, isInitialDrawing, isBrushActive, isAiSubjectActive, isParametricActive, cursorStyle]);
+    }, [isWbPickerActive, isColorMixerTatPickerActive, isToneCurveTatPickerActive, isInitialDrawing, isBrushActive, isAiSubjectActive, isParametricActive, cursorStyle]);
 
     const handlePreviewUpdate = useCallback(
       (id: string, subMaskPreview: Partial<SubMask>) => {
@@ -1933,7 +2127,7 @@ const ImageCanvas = memo(
             </div>
           </div>
 
-          {(isMasking || isAiEditing || isWbPickerActive) && (
+          {(isMasking || isAiEditing || isWbPickerActive || isColorMixerTatPickerActive || isToneCurveTatPickerActive) && (
             <Stage
               height={imageRenderSize.height}
               onMouseDown={handleMouseDown}
