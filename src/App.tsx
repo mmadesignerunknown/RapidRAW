@@ -5143,7 +5143,6 @@ function App() {
               isToneCurveTatPickerActive={isToneCurveTatPickerActive}
               onToneCurveTatPicked={handleToneCurveTatPicked}
               activeCurveChannel={activeCurveChannel}
-              setActiveCurveChannel={setActiveCurveChannel}
               setAdjustments={setAdjustments}
               setShowOriginal={setShowOriginal}
               showOriginal={showOriginal}
