@@ -293,6 +293,7 @@ function App() {
     selectedImagePathRef.current = selectedImage?.path ?? null;
   }, [selectedImage?.path]);
   const [multiSelectedPaths, setMultiSelectedPaths] = useState<Array<string>>([]);
+  const [selectionAnchorPath, setSelectionAnchorPath] = useState<string | null>(null);
   const [libraryActivePath, setLibraryActivePath] = useState<string | null>(null);
   const [libraryActiveAdjustments, setLibraryActiveAdjustments] = useState<Adjustments>(INITIAL_ADJUSTMENTS);
   const [finalPreviewUrl, setFinalPreviewUrl] = useState<string | null>(null);
@@ -2155,10 +2156,14 @@ function App() {
         setMultiSelectedPaths([]);
         setLibraryActivePath(null);
         if (selectedImage) {
+          debouncedSave.flush();
+          debouncedSetHistory.cancel();
           setSelectedImage(null);
           setFinalPreviewUrl(null);
           setUncroppedAdjustedPreviewUrl(null);
           setHistogram(null);
+          setLiveAdjustments(INITIAL_ADJUSTMENTS);
+          resetAdjustmentsHistory(INITIAL_ADJUSTMENTS);
         }
 
         const command =
@@ -2223,7 +2228,18 @@ function App() {
         setIsViewLoading(false);
       }
     },
-    [appSettings, handleSettingsChange, selectedImage, rootPath, sortCriteria.key, pinnedFolders, libraryViewMode],
+    [
+      appSettings,
+      handleSettingsChange,
+      selectedImage,
+      rootPath,
+      sortCriteria.key,
+      pinnedFolders,
+      libraryViewMode,
+      debouncedSave,
+      debouncedSetHistory,
+      resetAdjustmentsHistory,
+    ],
   );
 
   const handleLibraryRefresh = useCallback(() => {
@@ -2363,6 +2379,10 @@ function App() {
       transformWrapperRef.current.resetTransform(0);
     }
     setZoom(1);
+
+    debouncedSave.flush();
+    debouncedSetHistory.cancel();
+
     const lastActivePath = selectedImage?.path ?? null;
     setSelectedImage(null);
     setFinalPreviewUrl(null);
@@ -2383,13 +2403,14 @@ function App() {
       if (prev?.url) URL.revokeObjectURL(prev.url);
       return null;
     });
-  }, [selectedImage?.path, resetAdjustmentsHistory]);
+  }, [selectedImage?.path, resetAdjustmentsHistory, debouncedSave, debouncedSetHistory]);
 
   const handleImageSelect = useCallback(
     (path: string) => {
       if (selectedImage?.path === path) return;
 
-      debouncedSave.cancel();
+      debouncedSave.flush();
+      debouncedSetHistory.cancel();
 
       if (selectedImage?.path && cachedEditStateRef.current) {
         imageCacheRef.current.set(selectedImage.path, cachedEditStateRef.current);
@@ -2499,7 +2520,7 @@ function App() {
         return null;
       });
     },
-    [selectedImage?.path, debouncedSave, thumbnails, resetAdjustmentsHistory],
+    [selectedImage?.path, debouncedSave, debouncedSetHistory, thumbnails, resetAdjustmentsHistory],
   );
 
   const executeDelete = useCallback(
@@ -3863,17 +3884,18 @@ function App() {
     const { shiftAnchor, onSimpleClick, updateLibraryActivePath } = options;
 
     if (shiftKey && shiftAnchor) {
-      const lastIndex = sortedImageList.findIndex((f) => f.path === shiftAnchor);
+      const anchorIndex = sortedImageList.findIndex((f) => f.path === shiftAnchor);
       const currentIndex = sortedImageList.findIndex((f) => f.path === path);
 
-      if (lastIndex !== -1 && currentIndex !== -1) {
-        const start = Math.min(lastIndex, currentIndex);
-        const end = Math.max(lastIndex, currentIndex);
+      if (anchorIndex !== -1 && currentIndex !== -1) {
+        const start = Math.min(anchorIndex, currentIndex);
+        const end = Math.max(anchorIndex, currentIndex);
         const range = sortedImageList.slice(start, end + 1).map((f: ImageFile) => f.path);
-        const baseSelection = isCtrlPressed ? multiSelectedPaths : [shiftAnchor];
+        const baseSelection = isCtrlPressed ? multiSelectedPaths : [];
         const newSelection = Array.from(new Set([...baseSelection, ...range]));
 
         setMultiSelectedPaths(newSelection);
+        setSelectionAnchorPath(path);
         if (updateLibraryActivePath) {
           setLibraryActivePath(path);
         }
@@ -3888,6 +3910,7 @@ function App() {
 
       const newSelectionArray = Array.from(newSelection);
       setMultiSelectedPaths(newSelectionArray);
+      setSelectionAnchorPath(path);
 
       if (updateLibraryActivePath) {
         if (newSelectionArray.includes(path)) {
@@ -3900,16 +3923,18 @@ function App() {
       }
     } else {
       onSimpleClick(path);
+      setSelectionAnchorPath(path);
     }
   };
 
   const handleLibraryImageSingleClick = (path: string, event: any) => {
     handleMultiSelectClick(path, event, {
-      shiftAnchor: libraryActivePath,
+      shiftAnchor: selectionAnchorPath ?? libraryActivePath,
       updateLibraryActivePath: true,
       onSimpleClick: (p: any) => {
         setMultiSelectedPaths([p]);
         setLibraryActivePath(p);
+        setSelectionAnchorPath(p);
       },
     });
   };
@@ -3917,9 +3942,12 @@ function App() {
   const handleImageClick = (path: string, event: any) => {
     const inEditor = !!selectedImage;
     handleMultiSelectClick(path, event, {
-      shiftAnchor: inEditor ? selectedImage.path : libraryActivePath,
+      shiftAnchor: selectionAnchorPath ?? (inEditor ? selectedImage.path : libraryActivePath),
       updateLibraryActivePath: !inEditor,
-      onSimpleClick: handleImageSelect,
+      onSimpleClick: (p: string) => {
+        handleImageSelect(p);
+        setSelectionAnchorPath(p);
+      },
     });
   };
 
