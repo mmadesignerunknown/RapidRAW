@@ -1,13 +1,15 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { RotateCcw, Copy, ClipboardPaste } from 'lucide-react';
-import { ActiveChannel, Adjustments, Coord } from '../../utils/adjustments';
+import { RotateCcw, Copy, ClipboardPaste, Spline, SlidersHorizontal } from 'lucide-react';
+import { ActiveChannel, Adjustments, Coord, ParametricCurveSettings } from '../../utils/adjustments';
 import { Theme, OPTION_SEPARATOR } from '../ui/AppProperties';
 import { useContextMenu } from '../../context/ContextMenuContext';
 import Text from '../ui/Text';
+import Slider from '../ui/Slider';
 import { TextColors, TextVariants, TextWeights } from '../../types/typography';
 
 let curveClipboard: Array<Coord> | null = null;
+let parametricClipboard: ParametricCurveSettings | null = null;
 
 export interface ChannelConfig {
   [index: string]: ColorData;
@@ -29,6 +31,237 @@ interface CurveGraphProps {
   setAdjustments(updater: (prev: any) => any): void;
   theme: string;
   onDragStateChange?: (isDragging: boolean) => void;
+}
+
+function getDefaultParametricCurve(): ParametricCurveSettings {
+  return {
+    darks: 0,
+    shadows: 0,
+    highlights: 0,
+    lights: 0,
+    split1: 25,
+    split2: 50,
+    split3: 75,
+  };
+}
+
+function getDefaultParametricCurveChannels() {
+  return {
+    [ActiveChannel.Luma]: getDefaultParametricCurve(),
+    [ActiveChannel.Red]: getDefaultParametricCurve(),
+    [ActiveChannel.Green]: getDefaultParametricCurve(),
+    [ActiveChannel.Blue]: getDefaultParametricCurve(),
+  };
+}
+
+function isDefaultParametricCurve(settings: ParametricCurveSettings | undefined) {
+  if (!settings) return true;
+  const defaults = getDefaultParametricCurve();
+  return (
+    settings.darks === defaults.darks &&
+    settings.shadows === defaults.shadows &&
+    settings.highlights === defaults.highlights &&
+    settings.lights === defaults.lights &&
+    settings.split1 === defaults.split1 &&
+    settings.split2 === defaults.split2 &&
+    settings.split3 === defaults.split3
+  );
+}
+
+// Get influence with clean boundaries - NO cross-region influence
+function getInfluence(slider: string, splitPointValue: number): number {
+  // splitPointValue is 0-1
+  
+  if (slider === 'shadows') {
+    // Shadows: strictly 0% to 30%
+    if (splitPointValue < 0 || splitPointValue > 0.30) return 0;
+    // Bell curve centered at 15%
+    const t = splitPointValue / 0.30; // Normalize to 0-1 within region
+    const influence = Math.sin(t * Math.PI); // Smooth rise and fall within region
+    return influence;
+  } 
+  else if (slider === 'darks') {
+    // Darks: strictly 20% to 55%
+    if (splitPointValue < 0.20 || splitPointValue > 0.55) return 0;
+    // Bell curve centered at 37.5%
+    const t = (splitPointValue - 0.20) / 0.35; // Normalize to 0-1 within region
+    const influence = Math.sin(t * Math.PI);
+    return influence;
+  } 
+  else if (slider === 'lights') {
+    // Lights: strictly 45% to 80%
+    if (splitPointValue < 0.45 || splitPointValue > 0.80) return 0;
+    // Bell curve centered at 62.5%
+    const t = (splitPointValue - 0.45) / 0.35; // Normalize to 0-1 within region
+    const influence = Math.sin(t * Math.PI);
+    return influence;
+  } 
+  else if (slider === 'highlights') {
+    // Highlights: strictly 70% to 100%
+    if (splitPointValue < 0.70 || splitPointValue > 1.0) return 0;
+    // Bell curve centered at 85%
+    const t = (splitPointValue - 0.70) / 0.30; // Normalize to 0-1 within region
+    const influence = Math.sin(t * Math.PI);
+    return influence;
+  }
+  return 0;
+}
+
+const MAX_OFFSET = 0.25; // Maximum vertical offset for control points
+
+function computeControlPoints(settings: ParametricCurveSettings) {
+  const normShadows = settings.shadows / 100;
+  const normDarks = settings.darks / 100;
+  const normLights = settings.lights / 100;
+  const normHighlights = settings.highlights / 100;
+
+  const split1 = settings.split1 / 100;
+  const split2 = settings.split2 / 100;
+  const split3 = settings.split3 / 100;
+
+  function offsetAt(splitPointNorm: number): number {
+    let off = 0;
+    off += normShadows * getInfluence('shadows', splitPointNorm) * MAX_OFFSET;
+    off += normDarks * getInfluence('darks', splitPointNorm) * MAX_OFFSET;
+    off += normLights * getInfluence('lights', splitPointNorm) * MAX_OFFSET;
+    off += normHighlights * getInfluence('highlights', splitPointNorm) * MAX_OFFSET;
+    return off;
+  }
+
+  let y1 = split1 + offsetAt(split1);
+  let y2 = split2 + offsetAt(split2);
+  let y3 = split3 + offsetAt(split3);
+
+  // Ensure monotonic increasing with smooth clamping
+  // Apply soft constraints to preserve smoothness at boundaries
+  const minGap = 0.01; // Minimum gap between control points
+  
+  // Constrain y1: must be between 0 and y2-minGap, but allow some flexibility
+  y1 = Math.min(Math.max(y1, 0.02), Math.min(y2 - minGap, 0.98));
+  
+  // Constrain y2: must be between y1+minGap and y3-minGap
+  y2 = Math.min(Math.max(y2, y1 + minGap), Math.min(y3 - minGap, 0.95));
+  
+  // Constrain y3: must be between y2+minGap and 1
+  y3 = Math.min(Math.max(y3, y2 + minGap), 0.98);
+
+  return { y1, y2, y3 };
+}
+
+// Monotonic cubic spline interpolation with improved smoothness
+function createMonotonicSpline(xp: number[], yp: number[]) {
+  const n = xp.length;
+  const m = new Array(n);
+  const delta = [];
+
+  // Calculate slopes between consecutive points
+  for (let i = 0; i < n - 1; i++) {
+    delta.push((yp[i + 1] - yp[i]) / (xp[i + 1] - xp[i]));
+  }
+
+  // Initialize slopes at each point
+  for (let i = 0; i < n; i++) {
+    if (i === 0) {
+      // Use forward difference for first point
+      m[i] = delta[0];
+    } else if (i === n - 1) {
+      // Use backward difference for last point
+      m[i] = delta[n - 2];
+    } else {
+      // Use average of slopes, but ensure monotonicity
+      if (delta[i - 1] * delta[i] <= 0) {
+        // Sign change: zero slope to prevent overshoot
+        m[i] = 0;
+      } else {
+        // Both same sign: weighted average based on interval lengths
+        const w1 = 2 * (xp[i + 1] - xp[i]);
+        const w2 = 2 * (xp[i] - xp[i - 1]);
+        m[i] = (w1 * delta[i - 1] + w2 * delta[i]) / (w1 + w2);
+      }
+    }
+  }
+
+  // Apply monotonicity constraints more carefully
+  for (let i = 0; i < n - 1; i++) {
+    if (delta[i] === 0) {
+      // Flat segment: ensure slopes are zero
+      m[i] = 0;
+      m[i + 1] = 0;
+    } else {
+      // Ensure slopes don't cause overshoot
+      const alpha = m[i] / delta[i];
+      const beta = m[i + 1] / delta[i];
+      
+      if (alpha * alpha + beta * beta > 9) {
+        // Slopes too steep: scale them down for smoothness
+        const tau = 3.0 / Math.sqrt(alpha * alpha + beta * beta);
+        m[i] = tau * alpha * delta[i];
+        m[i + 1] = tau * beta * delta[i];
+      }
+    }
+  }
+
+  return function (t: number) {
+    if (t <= xp[0]) return yp[0];
+    if (t >= xp[n - 1]) return yp[n - 1];
+
+    let idx = 0;
+    for (let i = 0; i < n - 1; i++) {
+      if (t >= xp[i] && t <= xp[i + 1]) {
+        idx = i;
+        break;
+      }
+    }
+
+    const x0 = xp[idx], x1 = xp[idx + 1];
+    const y0 = yp[idx], y1 = yp[idx + 1];
+    const m0 = m[idx], m1 = m[idx + 1];
+    const h = x1 - x0;
+    const tNorm = (t - x0) / h;
+    const t2 = tNorm * tNorm;
+    const t3 = t2 * tNorm;
+
+    // Hermite basis functions
+    const h00 = 2 * t3 - 3 * t2 + 1;
+    const h10 = t3 - 2 * t2 + tNorm;
+    const h01 = -2 * t3 + 3 * t2;
+    const h11 = t3 - t2;
+
+    return h00 * y0 + h10 * m0 * h + h01 * y1 + h11 * m1 * h;
+  };
+}
+
+function buildParametricCurve(settings: ParametricCurveSettings, pointCount = 256): Array<Coord> {
+  const split1 = settings.split1 / 100;
+  const split2 = settings.split2 / 100;
+  const split3 = settings.split3 / 100;
+
+  const { y1, y2, y3 } = computeControlPoints(settings);
+
+  const xPoints = [0, split1, split2, split3, 1];
+  const yPoints = [0, y1, y2, y3, 1];
+
+  const spline = createMonotonicSpline(xPoints, yPoints);
+
+  const points: Array<Coord> = [];
+
+  for (let i = 0; i < pointCount; i++) {
+    const x = (i / (pointCount - 1)) * 255;
+    const t = x / 255;
+    let y = spline(t);
+    y = Math.max(0, Math.min(1, y));
+
+    points.push({
+      x,
+      y: y * 255,
+    });
+  }
+
+  return points;
+}
+
+function buildParametricCurvePreview(settings: ParametricCurveSettings): Array<Coord> {
+  return buildParametricCurve(settings, 256);
 }
 
 function getCurvePath(points: Array<Coord>) {
@@ -149,6 +382,20 @@ function isDefaultCurve(points: Array<Coord> | undefined) {
   return p1.x === 0 && p1.y === 0 && p2.x === 255 && p2.y === 255;
 }
 
+function areCurvesEqual(a: Array<Coord> | undefined, b: Array<Coord> | undefined) {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  if (a.length !== b.length) return false;
+
+  for (let i = 0; i < a.length; i++) {
+    if (a[i].x !== b[i].x || a[i].y !== b[i].y) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 export default function CurveGraph({
   adjustments,
   setAdjustments,
@@ -160,8 +407,11 @@ export default function CurveGraph({
   const { showContextMenu } = useContextMenu();
   const [activeChannel, setActiveChannel] = useState<ActiveChannel>(ActiveChannel.Luma);
   const [draggingPointIndex, setDraggingPointIndex] = useState<number | null>(null);
+  const [draggingSplitKey, setDraggingSplitKey] = useState<'split1' | 'split2' | 'split3' | null>(null);
   const [localPoints, setLocalPoints] = useState<Array<Coord> | null>(null);
   const [isHovered, setIsHovered] = useState(false);
+  const [curveMode, setCurveMode] = useState<'point' | 'parametric'>('point');
+  const [activeParametricChannel, setActiveParametricChannel] = useState<ActiveChannel>(ActiveChannel.Luma);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -171,11 +421,23 @@ export default function CurveGraph({
   const propPointsRef = useRef<Array<Coord> | undefined>(undefined);
   const isHoveredRef = useRef(false);
 
+  const parametricCurves = adjustments?.parametricCurve || getDefaultParametricCurveChannels();
+  const parametricCurve = parametricCurves[activeParametricChannel] || getDefaultParametricCurve();
+  const isParametricMode = curveMode === 'parametric';
+
+  const parametricPreviewPoints = useMemo(() => buildParametricCurvePreview(parametricCurve), [parametricCurve]);
+
   useEffect(() => {
     activeChannelRef.current = activeChannel;
     setLocalPoints(null);
     setDraggingPointIndex(null);
   }, [activeChannel]);
+
+  useEffect(() => {
+    if (curveMode === 'parametric') {
+      setActiveParametricChannel(ActiveChannel.Luma);
+    }
+  }, [curveMode]);
 
   useEffect(() => {
     propPointsRef.current = adjustments?.curves?.[activeChannel];
@@ -189,10 +451,10 @@ export default function CurveGraph({
   }, [adjustments?.curves?.[activeChannel], draggingPointIndex]);
 
   useEffect(() => {
-    const isDragging = draggingPointIndex !== null;
+    const isDragging = draggingPointIndex !== null || draggingSplitKey !== null;
     onDragStateChange?.(isDragging);
     draggingIndexRef.current = draggingPointIndex;
-  }, [draggingPointIndex, onDragStateChange]);
+  }, [draggingPointIndex, draggingSplitKey, onDragStateChange]);
 
   useEffect(() => {
     const handleGlobalMouseMove = (e: MouseEvent) => {
@@ -216,13 +478,14 @@ export default function CurveGraph({
     };
   }, []);
 
+  // Point curve mouse handlers
   useEffect(() => {
     const handleMouseMove = (e: any) => {
       const index = draggingIndexRef.current;
       if (index === null) return;
 
       const currentPoints = localPointsRef.current || propPointsRef.current;
-      if (!currentPoints) return;
+      if (!currentPoints || isParametricMode) return;
 
       const svg = svgRef.current;
       if (!svg) return;
@@ -256,8 +519,48 @@ export default function CurveGraph({
       }));
     };
 
+    // Parametric split mouse handlers
+    const handleParametricMouseMove = (e: any) => {
+      if (!draggingSplitKey) return;
+
+      const svg = svgRef.current;
+      if (!svg) return;
+
+      const rect = svg.getBoundingClientRect();
+      const rawX = ((e.clientX - rect.left) / rect.width) * 100;
+
+      const minGap = 10; // 10% minimum gap between splitters
+      let nextValue = Math.max(0, Math.min(100, rawX));
+
+      if (draggingSplitKey === 'split1') {
+        nextValue = Math.min(nextValue, parametricCurve.split2 - minGap);
+        nextValue = Math.max(nextValue, 10); // Minimum 10%
+      } else if (draggingSplitKey === 'split2') {
+        nextValue = Math.max(nextValue, parametricCurve.split1 + minGap);
+        nextValue = Math.min(nextValue, parametricCurve.split3 - minGap);
+      } else if (draggingSplitKey === 'split3') {
+        nextValue = Math.max(nextValue, parametricCurve.split2 + minGap);
+        nextValue = Math.min(nextValue, 90); // Maximum 90%
+      }
+
+      setAdjustments((prev: Adjustments) => {
+        const parametricChannels = prev.parametricCurve || getDefaultParametricCurveChannels();
+        return {
+          ...prev,
+          parametricCurve: {
+            ...parametricChannels,
+            [activeParametricChannel]: {
+              ...(parametricChannels[activeParametricChannel] || getDefaultParametricCurve()),
+              [draggingSplitKey]: nextValue,
+            },
+          },
+        };
+      });
+    };
+
     const handleMouseUp = () => {
       setDraggingPointIndex(null);
+      setDraggingSplitKey(null);
       draggingIndexRef.current = null;
       localPointsRef.current = null;
       onDragStateChange?.(false);
@@ -266,13 +569,17 @@ export default function CurveGraph({
     if (draggingPointIndex !== null) {
       window.addEventListener('mousemove', handleMouseMove);
       window.addEventListener('mouseup', handleMouseUp);
+    } else if (draggingSplitKey !== null) {
+      window.addEventListener('mousemove', handleParametricMouseMove);
+      window.addEventListener('mouseup', handleMouseUp);
     }
 
     return () => {
       window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mousemove', handleParametricMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
     };
-  }, [draggingPointIndex, setAdjustments, onDragStateChange]);
+  }, [draggingPointIndex, draggingSplitKey, setAdjustments, onDragStateChange, parametricCurve, isParametricMode, activeParametricChannel]);
 
   const isLightTheme = theme === Theme.Light || theme === Theme.Arctic;
   const histogramOpacity = isLightTheme ? 0.6 : 0.15;
@@ -285,10 +592,12 @@ export default function CurveGraph({
   };
 
   const propPoints = adjustments?.curves?.[activeChannel];
-  const points = localPoints ?? propPoints;
-  const { color, data: histogramData } = channelConfig[activeChannel];
+  const pointModePoints = localPoints ?? propPoints;
+  const points = isParametricMode ? parametricPreviewPoints : pointModePoints;
+  const renderChannel = isParametricMode ? activeParametricChannel : activeChannel;
+  const { color, data: histogramData } = channelConfig[renderChannel];
 
-  if (!propPoints || !points) {
+  if ((!propPoints && !isParametricMode) || !points) {
     return (
       <Text
         as="div"
@@ -311,7 +620,26 @@ export default function CurveGraph({
     return { x, y };
   };
 
+  const updateParametricValue = (key: keyof ParametricCurveSettings, value: number) => {
+    setAdjustments((prev: Adjustments) => {
+      const parametricChannels = prev.parametricCurve || getDefaultParametricCurveChannels();
+
+      return {
+        ...prev,
+        parametricCurve: {
+          ...parametricChannels,
+          [activeParametricChannel]: {
+            ...(parametricChannels[activeParametricChannel] || getDefaultParametricCurve()),
+            [key]: value,
+          },
+        },
+      };
+    });
+  };
+
   const handlePointMouseDown = (e: any, index: number) => {
+    if (isParametricMode) return;
+
     e.preventDefault();
     e.stopPropagation();
 
@@ -326,11 +654,13 @@ export default function CurveGraph({
   };
 
   const handlePointContextMenu = (e: React.MouseEvent, index: number) => {
-    if (index > 0 && index < points.length - 1) {
+    if (isParametricMode || !pointModePoints) return;
+
+    if (index > 0 && index < pointModePoints.length - 1) {
       e.preventDefault();
       e.stopPropagation();
 
-      const newPoints = points.filter((_, i) => i !== index);
+      const newPoints = pointModePoints.filter((_, i) => i !== index);
 
       setLocalPoints(newPoints);
       localPointsRef.current = newPoints;
@@ -343,6 +673,7 @@ export default function CurveGraph({
   };
 
   const handleContainerMouseDown = (e: any) => {
+    if (isParametricMode || !pointModePoints) return;
     if (e.button !== 0 || e.target.tagName === 'circle') {
       return;
     }
@@ -350,7 +681,7 @@ export default function CurveGraph({
     onDragStateChange?.(true);
 
     const { x, y } = getMousePos(e);
-    const newPoints = [...points, { x, y }].sort((a: Coord, b: Coord) => a.x - b.x);
+    const newPoints = [...pointModePoints, { x, y }].sort((a: Coord, b: Coord) => a.x - b.x);
     const newPointIndex = newPoints.findIndex((p: Coord) => p.x === x && p.y === y);
 
     setLocalPoints(newPoints);
@@ -366,6 +697,30 @@ export default function CurveGraph({
   };
 
   const handleDoubleClick = () => {
+    if (isParametricMode) {
+      const defaultCurvePoints = [
+        { x: 0, y: 0 },
+        { x: 255, y: 255 },
+      ];
+
+      setAdjustments((prev: Adjustments) => {
+        const parametricChannels = prev.parametricCurve || getDefaultParametricCurveChannels();
+
+        return {
+          ...prev,
+          parametricCurve: {
+            ...parametricChannels,
+            [activeParametricChannel]: getDefaultParametricCurve(),
+          },
+          curves: {
+            ...prev.curves,
+            [activeParametricChannel]: defaultCurvePoints,
+          },
+        };
+      });
+      return;
+    }
+
     const defaultPoints = [
       { x: 0, y: 0 },
       { x: 255, y: 255 },
@@ -378,12 +733,76 @@ export default function CurveGraph({
     }));
   };
 
+  const handleResetParametric = () => {
+    const defaultCurvePoints = [
+      { x: 0, y: 0 },
+      { x: 255, y: 255 },
+    ];
+
+    setAdjustments((prev: Adjustments) => {
+      const parametricChannels = prev.parametricCurve || getDefaultParametricCurveChannels();
+
+      return {
+        ...prev,
+        parametricCurve: {
+          ...parametricChannels,
+          [activeParametricChannel]: getDefaultParametricCurve(),
+        },
+        curves: {
+          ...prev.curves,
+          [activeParametricChannel]: defaultCurvePoints,
+        },
+      };
+    });
+  };
+
   const handleContextMenu = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
 
+    if (isParametricMode) {
+      const handleCopyParametric = () => {
+        parametricClipboard = { ...parametricCurve };
+      };
+
+      const handlePasteParametric = () => {
+        if (!parametricClipboard) return;
+        setAdjustments((prev: Adjustments) => {
+          const parametricChannels = prev.parametricCurve || getDefaultParametricCurveChannels();
+          return {
+            ...prev,
+            parametricCurve: {
+              ...parametricChannels,
+              [activeParametricChannel]: { ...parametricClipboard },
+            },
+          };
+        });
+      };
+
+      showContextMenu(e.clientX, e.clientY, [
+        {
+          label: `Copy ${activeParametricChannel.charAt(0).toUpperCase() + activeParametricChannel.slice(1)} Settings`,
+          icon: Copy,
+          onClick: handleCopyParametric,
+        },
+        {
+          label: 'Paste Settings',
+          icon: ClipboardPaste,
+          onClick: handlePasteParametric,
+          disabled: !parametricClipboard,
+        },
+        { type: OPTION_SEPARATOR },
+        {
+          label: `Reset ${activeParametricChannel.charAt(0).toUpperCase() + activeParametricChannel.slice(1)} Parametric Curve`,
+          icon: RotateCcw,
+          onClick: handleResetParametric,
+        },
+      ]);
+      return;
+    }
+
     const handleCopy = () => {
-      curveClipboard = points.map((p) => ({ ...p }));
+      curveClipboard = pointModePoints.map((p) => ({ ...p }));
     };
 
     const handlePaste = () => {
@@ -471,33 +890,72 @@ export default function CurveGraph({
     showContextMenu(e.clientX, e.clientY, options);
   };
 
+  const splitPositions = [
+    { key: 'split1' as const, value: parametricCurve.split1 },
+    { key: 'split2' as const, value: parametricCurve.split2 },
+    { key: 'split3' as const, value: parametricCurve.split3 },
+  ];
+
   return (
     <div className="select-none" ref={containerRef}>
-      <div className="flex items-center justify-between gap-1 mb-2 mt-2">
-        <div className="flex items-center gap-1">
-          {Object.keys(channelConfig).map((channel: any) => (
-            <button
-              className={`w-7 h-7 rounded-full flex items-center justify-center transition-all
-              ${
-                activeChannel === channel
-                  ? 'ring-2 ring-offset-2 ring-offset-surface ring-accent'
-                  : 'bg-surface-secondary'
-              }
-              ${channel === ActiveChannel.Luma ? 'text-text-primary' : ''}`}
-              key={channel}
-              onClick={() => setActiveChannel(channel as ActiveChannel)}
-              style={{
-                backgroundColor:
-                  channel !== ActiveChannel.Luma && activeChannel !== channel
-                    ? channelConfig[channel].color + '40'
-                    : undefined,
-              }}
-            >
-              <Text variant={TextVariants.small} color={TextColors.primary} weight={TextWeights.bold}>
-                {channel.charAt(0).toUpperCase()}
-              </Text>
-            </button>
-          ))}
+      <div className="flex items-center justify-between gap-2 mb-2 mt-2">
+        <div className="flex items-center gap-1 p-1 rounded-lg bg-surface-secondary shrink-0">
+          <button
+            className={`w-8 h-8 rounded-md flex items-center justify-center transition-all ${
+              !isParametricMode ? 'bg-surface text-text-primary' : 'text-text-secondary hover:text-text-primary'
+            }`}
+            onClick={() => setCurveMode('point')}
+            title="Point Curve"
+            type="button"
+          >
+            <Spline size={16} />
+          </button>
+          <button
+            className={`w-8 h-8 rounded-md flex items-center justify-center transition-all ${
+              isParametricMode ? 'bg-surface text-text-primary' : 'text-text-secondary hover:text-text-primary'
+            }`}
+            onClick={() => setCurveMode('parametric')}
+            title="Parametric Curve"
+            type="button"
+          >
+            <SlidersHorizontal size={16} />
+          </button>
+        </div>
+
+        <div className="flex items-center gap-1 shrink-0">
+          {Object.keys(channelConfig).map((channel: any) => {
+            const selected = isParametricMode ? activeParametricChannel === channel : activeChannel === channel;
+
+            return (
+              <button
+                className={`w-7 h-7 rounded-full flex items-center justify-center transition-all
+                ${
+                  selected
+                    ? 'ring-2 ring-offset-2 ring-offset-surface ring-accent'
+                    : 'bg-surface-secondary'
+                }
+                ${channel === ActiveChannel.Luma ? 'text-text-primary' : ''}`}
+                key={channel}
+                onClick={() =>
+                  isParametricMode
+                    ? setActiveParametricChannel(channel as ActiveChannel)
+                    : setActiveChannel(channel as ActiveChannel)
+                }
+                type="button"
+                style={{
+                  backgroundColor:
+                    channel !== ActiveChannel.Luma && !selected
+                      ? channelConfig[channel].color + '40'
+                      : undefined,
+                }}
+                title={`${channel.charAt(0).toUpperCase() + channel.slice(1)} Channel`}
+              >
+                <Text variant={TextVariants.small} color={TextColors.primary} weight={TextWeights.bold}>
+                  {channel.charAt(0).toUpperCase()}
+                </Text>
+              </button>
+            );
+          })}
         </div>
       </div>
 
@@ -517,7 +975,7 @@ export default function CurveGraph({
           <AnimatePresence>
             {histogramData && (
               <motion.path
-                key={activeChannel}
+                key={renderChannel}
                 fill={color}
                 initial={{ d: getZeroHistogramPath(histogramData), opacity: 0 }}
                 animate={{
@@ -536,24 +994,127 @@ export default function CurveGraph({
 
           <line x1="0" y1="255" x2="255" y2="0" stroke="rgba(255,255,255,0.2)" strokeWidth="1" strokeDasharray="2 2" />
 
+          {isParametricMode &&
+            splitPositions.map(({ key, value }) => {
+              const x = (value / 100) * 255;
+              return <line key={key} x1={x} y1="0" x2={x} y2="255" stroke="rgba(255,255,255,0.12)" strokeWidth="1" />;
+            })}
+
           <path d={getCurvePath(points)} fill="none" stroke={color} strokeWidth="2.5" />
 
-          {points.map((p: Coord, i: number) => (
-            <circle
-              className="cursor-pointer"
-              cx={p.x}
-              cy={255 - p.y}
-              fill={color}
-              key={i}
-              onMouseDown={(e: any) => handlePointMouseDown(e, i)}
-              onContextMenu={(e: React.MouseEvent) => handlePointContextMenu(e, i)}
-              r="6"
-              stroke="#1e1e1e"
-              strokeWidth="2"
-            />
-          ))}
+          {!isParametricMode &&
+            points.map((p: Coord, i: number) => (
+              <circle
+                className="cursor-pointer"
+                cx={p.x}
+                cy={255 - p.y}
+                fill={color}
+                key={i}
+                onMouseDown={(e: any) => handlePointMouseDown(e, i)}
+                onContextMenu={(e: React.MouseEvent) => handlePointContextMenu(e, i)}
+                r="6"
+                stroke="#1e1e1e"
+                strokeWidth="2"
+              />
+            ))}
         </svg>
+
+        {isParametricMode && (
+          <div className="absolute left-0 right-0 -bottom-8 px-1">
+            <div className="relative">
+              <div className="h-7 rounded-md bg-surface border border-border overflow-hidden relative">
+                <div
+                  className="absolute inset-0"
+                  style={{
+                    background: `linear-gradient(
+                      to right,
+                      rgba(0, 0, 0, 0.8) 0%,
+                      rgba(64, 64, 64, 0.8) 25%,
+                      rgba(105, 101, 101, 0.8) 50%,
+                      rgba(158, 154, 154, 0.8) 75%,
+                      rgba(198, 195, 197, 0.8) 100%
+                    )`,
+                  }}
+                />
+
+                <div className="absolute top-0 left-0 right-0 h-px bg-white/20" />
+
+                {splitPositions.map(({ key, value }) => (
+                  <button
+                    key={key}
+                    className="absolute top-0 bottom-0 w-3 -translate-x-1/2 cursor-ew-resize group"
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setDraggingSplitKey(key);
+                    }}
+                    onDoubleClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      const defaults = getDefaultParametricCurve();
+                      updateParametricValue(key, defaults[key]);
+                    }}
+                    style={{ left: `${value}%` }}
+                    type="button"
+                  >
+                    <div className="absolute inset-y-0 left-1/2 -translate-x-1/2 w-px bg-white/70 group-hover:bg-white" />
+                    <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-2 h-4 rounded-sm bg-white/80 border border-white/60 group-hover:bg-white group-hover:border-white" />
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
+      {isParametricMode && !isForMask && (
+        <div className="mt-14 flex flex-col gap-2">
+          <Text
+            as="div"
+            variant={TextVariants.small}
+            color={TextColors.secondary}
+            className="mb-1"
+          >
+            Parametric Channel: {activeParametricChannel.charAt(0).toUpperCase() + activeParametricChannel.slice(1)}
+          </Text>
+          {/* Sliders in order: Highlights (rightmost), Lights, Darks, Shadows (leftmost) */}
+          <Slider
+            label="Highlights"
+            min={-100}
+            max={100}
+            step={1}
+            defaultValue={0}
+            value={parametricCurve.highlights}
+            onChange={(e: any) => updateParametricValue('highlights', parseFloat(e.target.value))}
+          />
+          <Slider
+            label="Lights"
+            min={-100}
+            max={100}
+            step={1}
+            defaultValue={0}
+            value={parametricCurve.lights}
+            onChange={(e: any) => updateParametricValue('lights', parseFloat(e.target.value))}
+          />
+          <Slider
+            label="Darks"
+            min={-100}
+            max={100}
+            step={1}
+            defaultValue={0}
+            value={parametricCurve.darks}
+            onChange={(e: any) => updateParametricValue('darks', parseFloat(e.target.value))}
+          />
+          <Slider
+            label="Shadows"
+            min={-100}
+            max={100}
+            step={1}
+            defaultValue={0}
+            value={parametricCurve.shadows}
+            onChange={(e: any) => updateParametricValue('shadows', parseFloat(e.target.value))}
+          />
+        </div>
+      )}
     </div>
   );
 }

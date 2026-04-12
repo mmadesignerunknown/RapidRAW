@@ -139,6 +139,7 @@ export interface Adjustments {
   colorNoiseReduction: number;
   contrast: number;
   curves: Curves;
+  parametricCurve?: ParametricCurve;
   crop: Crop | null;
   dehaze: number;
   exposure: number;
@@ -235,6 +236,24 @@ interface ColorGradingProps {
 export interface Coord {
   x: number;
   y: number;
+}
+
+export interface ParametricCurveSettings {
+  darks: number;
+  shadows: number;
+  highlights: number;
+  lights: number;
+  split1: number;
+  split2: number;
+  split3: number;
+}
+
+export interface ParametricCurve {
+  [index: string]: ParametricCurveSettings;
+  blue: ParametricCurveSettings;
+  green: ParametricCurveSettings;
+  luma: ParametricCurveSettings;
+  red: ParametricCurveSettings;
 }
 
 export interface Curves {
