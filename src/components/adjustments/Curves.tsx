@@ -68,46 +68,36 @@ function isDefaultParametricCurve(settings: ParametricCurveSettings | undefined)
   );
 }
 
-// Get influence with clean boundaries - NO cross-region influence
 function getInfluence(slider: string, splitPointValue: number): number {
-  // splitPointValue is 0-1
   
   if (slider === 'shadows') {
-    // Shadows: strictly 0% to 30%
     if (splitPointValue < 0 || splitPointValue > 0.30) return 0;
-    // Bell curve centered at 15%
-    const t = splitPointValue / 0.30; // Normalize to 0-1 within region
-    const influence = Math.sin(t * Math.PI); // Smooth rise and fall within region
+    const t = splitPointValue / 0.30;
+    const influence = Math.sin(t * Math.PI);n
     return influence;
   } 
   else if (slider === 'darks') {
-    // Darks: strictly 20% to 55%
     if (splitPointValue < 0.20 || splitPointValue > 0.55) return 0;
-    // Bell curve centered at 37.5%
-    const t = (splitPointValue - 0.20) / 0.35; // Normalize to 0-1 within region
+    const t = (splitPointValue - 0.20) / 0.35;
     const influence = Math.sin(t * Math.PI);
     return influence;
   } 
   else if (slider === 'lights') {
-    // Lights: strictly 45% to 80%
     if (splitPointValue < 0.45 || splitPointValue > 0.80) return 0;
-    // Bell curve centered at 62.5%
-    const t = (splitPointValue - 0.45) / 0.35; // Normalize to 0-1 within region
+    const t = (splitPointValue - 0.45) / 0.35;
     const influence = Math.sin(t * Math.PI);
     return influence;
   } 
   else if (slider === 'highlights') {
-    // Highlights: strictly 70% to 100%
     if (splitPointValue < 0.70 || splitPointValue > 1.0) return 0;
-    // Bell curve centered at 85%
-    const t = (splitPointValue - 0.70) / 0.30; // Normalize to 0-1 within region
+    const t = (splitPointValue - 0.70) / 0.30;
     const influence = Math.sin(t * Math.PI);
     return influence;
   }
   return 0;
 }
 
-const MAX_OFFSET = 0.25; // Maximum vertical offset for control points
+const MAX_OFFSET = 0.25;
 
 function computeControlPoints(settings: ParametricCurveSettings) {
   const normShadows = settings.shadows / 100;
@@ -132,48 +122,33 @@ function computeControlPoints(settings: ParametricCurveSettings) {
   let y2 = split2 + offsetAt(split2);
   let y3 = split3 + offsetAt(split3);
 
-  // Ensure monotonic increasing with smooth clamping
-  // Apply soft constraints to preserve smoothness at boundaries
-  const minGap = 0.01; // Minimum gap between control points
+  const minGap = 0.01;
   
-  // Constrain y1: must be between 0 and y2-minGap, but allow some flexibility
   y1 = Math.min(Math.max(y1, 0.02), Math.min(y2 - minGap, 0.98));
-  
-  // Constrain y2: must be between y1+minGap and y3-minGap
   y2 = Math.min(Math.max(y2, y1 + minGap), Math.min(y3 - minGap, 0.95));
-  
-  // Constrain y3: must be between y2+minGap and 1
   y3 = Math.min(Math.max(y3, y2 + minGap), 0.98);
 
   return { y1, y2, y3 };
 }
 
-// Monotonic cubic spline interpolation with improved smoothness
 function createMonotonicSpline(xp: number[], yp: number[]) {
   const n = xp.length;
   const m = new Array(n);
   const delta = [];
 
-  // Calculate slopes between consecutive points
   for (let i = 0; i < n - 1; i++) {
     delta.push((yp[i + 1] - yp[i]) / (xp[i + 1] - xp[i]));
   }
 
-  // Initialize slopes at each point
   for (let i = 0; i < n; i++) {
     if (i === 0) {
-      // Use forward difference for first point
       m[i] = delta[0];
     } else if (i === n - 1) {
-      // Use backward difference for last point
       m[i] = delta[n - 2];
     } else {
-      // Use average of slopes, but ensure monotonicity
       if (delta[i - 1] * delta[i] <= 0) {
-        // Sign change: zero slope to prevent overshoot
         m[i] = 0;
       } else {
-        // Both same sign: weighted average based on interval lengths
         const w1 = 2 * (xp[i + 1] - xp[i]);
         const w2 = 2 * (xp[i] - xp[i - 1]);
         m[i] = (w1 * delta[i - 1] + w2 * delta[i]) / (w1 + w2);
@@ -181,19 +156,15 @@ function createMonotonicSpline(xp: number[], yp: number[]) {
     }
   }
 
-  // Apply monotonicity constraints more carefully
   for (let i = 0; i < n - 1; i++) {
     if (delta[i] === 0) {
-      // Flat segment: ensure slopes are zero
       m[i] = 0;
       m[i + 1] = 0;
     } else {
-      // Ensure slopes don't cause overshoot
       const alpha = m[i] / delta[i];
       const beta = m[i + 1] / delta[i];
       
       if (alpha * alpha + beta * beta > 9) {
-        // Slopes too steep: scale them down for smoothness
         const tau = 3.0 / Math.sqrt(alpha * alpha + beta * beta);
         m[i] = tau * alpha * delta[i];
         m[i + 1] = tau * beta * delta[i];
@@ -221,7 +192,6 @@ function createMonotonicSpline(xp: number[], yp: number[]) {
     const t2 = tNorm * tNorm;
     const t3 = t2 * tNorm;
 
-    // Hermite basis functions
     const h00 = 2 * t3 - 3 * t2 + 1;
     const h10 = t3 - 2 * t2 + tNorm;
     const h01 = -2 * t3 + 3 * t2;
@@ -478,7 +448,6 @@ export default function CurveGraph({
     };
   }, []);
 
-  // Point curve mouse handlers
   useEffect(() => {
     const handleMouseMove = (e: any) => {
       const index = draggingIndexRef.current;
@@ -519,7 +488,6 @@ export default function CurveGraph({
       }));
     };
 
-    // Parametric split mouse handlers
     const handleParametricMouseMove = (e: any) => {
       if (!draggingSplitKey) return;
 
@@ -529,18 +497,18 @@ export default function CurveGraph({
       const rect = svg.getBoundingClientRect();
       const rawX = ((e.clientX - rect.left) / rect.width) * 100;
 
-      const minGap = 10; // 10% minimum gap between splitters
+      const minGap = 10;
       let nextValue = Math.max(0, Math.min(100, rawX));
 
       if (draggingSplitKey === 'split1') {
         nextValue = Math.min(nextValue, parametricCurve.split2 - minGap);
-        nextValue = Math.max(nextValue, 10); // Minimum 10%
+        nextValue = Math.max(nextValue, 10);
       } else if (draggingSplitKey === 'split2') {
         nextValue = Math.max(nextValue, parametricCurve.split1 + minGap);
         nextValue = Math.min(nextValue, parametricCurve.split3 - minGap);
       } else if (draggingSplitKey === 'split3') {
         nextValue = Math.max(nextValue, parametricCurve.split2 + minGap);
-        nextValue = Math.min(nextValue, 90); // Maximum 90%
+        nextValue = Math.min(nextValue, 90);
       }
 
       setAdjustments((prev: Adjustments) => {
@@ -1076,7 +1044,6 @@ export default function CurveGraph({
           >
             Parametric Channel: {activeParametricChannel.charAt(0).toUpperCase() + activeParametricChannel.slice(1)}
           </Text>
-          {/* Sliders in order: Highlights (rightmost), Lights, Darks, Shadows (leftmost) */}
           <Slider
             label="Highlights"
             min={-100}
