@@ -115,7 +115,7 @@ const ColorSwatch = ({ color, name, isActive, onClick }: ColorSwatchProps) => {
 };
 
 const ColorGradingPanel = ({ adjustments, setAdjustments, onDragStateChange }: ColorPanelProps) => {
-  const [activeTab, setActiveTab] = useState<'3way' | 'global'>('3way');
+  const [activeTab, setActiveTab] = useState<'3way' | 'shadows' | 'midtones' | 'highlights' | 'global'>('3way');
   const [isExpanded, setIsExpanded] = useState(false);
   const colorGrading = adjustments.colorGrading || INITIAL_ADJUSTMENTS.colorGrading;
 
@@ -143,7 +143,7 @@ const ColorGradingPanel = ({ adjustments, setAdjustments, onDragStateChange }: C
     {
       id: '3way',
       icon: (
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" className="w-full h-full">
           <circle cx="12" cy="6" r="4.5" />
           <circle cx="5" cy="18" r="4.5" />
           <circle cx="19" cy="18" r="4.5" />
@@ -151,28 +151,88 @@ const ColorGradingPanel = ({ adjustments, setAdjustments, onDragStateChange }: C
       ),
     },
     {
+      id: 'shadows',
+      icon: <div className="w-full h-full rounded-full" style={{ background: '#555' }} />,
+    },
+    {
+      id: 'midtones',
+      icon: <div className="w-full h-full rounded-full" style={{ background: '#888' }} />,
+    },
+    {
+      id: 'highlights',
+      icon: <div className="w-full h-full rounded-full" style={{ background: '#bbb' }} />,
+    },
+    {
       id: 'global',
-      icon: <div className="w-3.5 h-3.5 rounded-full" style={{ background: 'linear-gradient(to top, #666, #fff)' }} />,
+      icon: (
+        <div className="w-full h-full rounded-full" style={{ background: 'linear-gradient(to top, #555, #888, #bbb)' }} />
+      ),
     },
   ];
 
   return (
     <div>
       <div className="flex items-center justify-start gap-2 mb-4 mt-2">
-        {tabs.map((tab) => {
+        {tabs.slice(0, 1).map((tab) => {
           const isActive = activeTab === tab.id;
           return (
             <button
               key={tab.id}
-              onClick={() => setActiveTab(tab.id as '3way' | 'global')}
-              className={`w-7 h-7 rounded-full flex items-center justify-center transition-all focus:outline-none
+              onClick={() => setActiveTab(tab.id as any)}
+              className={`aspect-square max-w-7 w-full rounded-full flex items-center justify-center transition-all focus:outline-none
                 ${
                   isActive
                     ? 'ring-2 ring-offset-2 ring-offset-surface ring-accent text-text-primary'
                     : 'bg-bg-secondary text-text-secondary hover:text-text-primary hover:bg-bg-secondary/80'
                 }`}
             >
-              {tab.icon}
+              <div className="w-[70%] h-[70%] flex items-center justify-center">
+                {tab.icon}
+              </div>
+            </button>
+          );
+        })}
+
+        <div className="w-px h-5 bg-text-secondary/20 mx-1" />
+
+        {tabs.slice(1, 4).map((tab) => {
+          const isActive = activeTab === tab.id;
+          return (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id as any)}
+              className={`aspect-square max-w-7 w-full rounded-full flex items-center justify-center transition-all focus:outline-none
+                ${
+                  isActive
+                    ? 'ring-2 ring-offset-2 ring-offset-surface ring-accent text-text-primary'
+                    : 'bg-bg-secondary text-text-secondary hover:text-text-primary hover:bg-bg-secondary/80'
+                }`}
+            >
+              <div className="w-[70%] h-[70%] flex items-center justify-center">
+                {tab.icon}
+              </div>
+            </button>
+          );
+        })}
+
+        <div className="w-px h-5 bg-text-secondary/20 mx-1" />
+
+        {tabs.slice(4).map((tab) => {
+          const isActive = activeTab === tab.id;
+          return (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id as any)}
+              className={`aspect-square max-w-7 w-full rounded-full flex items-center justify-center transition-all focus:outline-none
+                ${
+                  isActive
+                    ? 'ring-2 ring-offset-2 ring-offset-surface ring-accent text-text-primary'
+                    : 'bg-bg-secondary text-text-secondary hover:text-text-primary hover:bg-bg-secondary/80'
+                }`}
+            >
+              <div className="w-[70%] h-[70%] flex items-center justify-center">
+                {tab.icon}
+              </div>
             </button>
           );
         })}
@@ -181,7 +241,7 @@ const ColorGradingPanel = ({ adjustments, setAdjustments, onDragStateChange }: C
 
         <button
           onClick={() => setIsExpanded(!isExpanded)}
-          className={`w-7 h-7 rounded-full flex items-center justify-center transition-all focus:outline-none
+          className={`aspect-square max-w-7 w-full rounded-full flex items-center justify-center transition-all focus:outline-none
             ${
               isExpanded
                 ? 'bg-accent text-button-text'
@@ -189,7 +249,9 @@ const ColorGradingPanel = ({ adjustments, setAdjustments, onDragStateChange }: C
             }`}
           data-tooltip="Toggle Sliders"
         >
-          <Sliders size={14} />
+          <div className="w-[70%] h-[70%] flex items-center justify-center">
+            <Sliders size={14} />
+          </div>
         </button>
       </div>
 
@@ -237,6 +299,66 @@ const ColorGradingPanel = ({ adjustments, setAdjustments, onDragStateChange }: C
                     isExpanded={isExpanded}
                   />
                 </div>
+              </div>
+            </motion.div>
+          ) : activeTab === 'shadows' ? (
+            <motion.div
+              key="shadows"
+              initial={{ opacity: 0, x: -15 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -15 }}
+              transition={{ duration: 0.2 }}
+              className="w-full flex justify-center"
+            >
+              <div className="w-full max-w-70">
+                <ColorWheel
+                  defaultValue={INITIAL_ADJUSTMENTS.colorGrading.shadows}
+                  label="Shadows"
+                  onChange={(val: HueSatLum) => handleChange(ColorGrading.Shadows, val)}
+                  value={colorGrading.shadows}
+                  onDragStateChange={onDragStateChange}
+                  isExpanded={isExpanded}
+                />
+              </div>
+            </motion.div>
+          ) : activeTab === 'midtones' ? (
+            <motion.div
+              key="midtones"
+              initial={{ opacity: 0, x: -15 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -15 }}
+              transition={{ duration: 0.2 }}
+              className="w-full flex justify-center"
+            >
+              <div className="w-full max-w-70">
+                <ColorWheel
+                  defaultValue={INITIAL_ADJUSTMENTS.colorGrading.midtones}
+                  label="Midtones"
+                  onChange={(val: HueSatLum) => handleChange(ColorGrading.Midtones, val)}
+                  value={colorGrading.midtones}
+                  onDragStateChange={onDragStateChange}
+                  isExpanded={isExpanded}
+                />
+              </div>
+            </motion.div>
+          ) : activeTab === 'highlights' ? (
+            <motion.div
+              key="highlights"
+              initial={{ opacity: 0, x: -15 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -15 }}
+              transition={{ duration: 0.2 }}
+              className="w-full flex justify-center"
+            >
+              <div className="w-full max-w-70">
+                <ColorWheel
+                  defaultValue={INITIAL_ADJUSTMENTS.colorGrading.highlights}
+                  label="Highlights"
+                  onChange={(val: HueSatLum) => handleChange(ColorGrading.Highlights, val)}
+                  value={colorGrading.highlights}
+                  onDragStateChange={onDragStateChange}
+                  isExpanded={isExpanded}
+                />
               </div>
             </motion.div>
           ) : (
