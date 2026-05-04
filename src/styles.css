@@ -66,6 +66,58 @@
   }
 }
 
+.range-slider-container {
+  @apply relative w-full h-5;
+}
+
+.range-slider-track {
+  @apply absolute top-1/2 left-0 w-full h-1.5 -translate-y-1/2 rounded-full overflow-hidden;
+}
+
+.range-slider-thumb {
+  @apply absolute top-1/2 w-4 h-4 -translate-x-1/2 -translate-y-1/2 rounded-full shadow-md cursor-ew-resize transition-transform;
+}
+
+.range-slider-thumb-white {
+  @apply bg-white border-2 border-accent;
+}
+
+.range-slider-thumb-accent {
+  @apply bg-accent border-2 border-white;
+}
+
+.range-slider-thumb-dragging {
+  @apply scale-110;
+}
+
+.range-slider-hard-zone {
+  @apply absolute top-1/2 h-1.5 -translate-y-1/2 bg-white/20 border-x border-white;
+}
+
+.range-slider-soft-zone {
+  @apply absolute top-1/2 h-1.5 -translate-y-1/2 bg-white/10;
+}
+
+.range-slider-overlay {
+  @apply absolute top-1/2 h-1.5 -translate-y-1/2 bg-black/50 rounded-full;
+}
+
+.range-slider-value-label {
+  @apply absolute -top-6 left-1/2 -translate-x-1/2 text-[10px] font-mono bg-black/80 px-1.5 py-0.5 rounded whitespace-nowrap text-text-secondary pointer-events-none;
+}
+
+.range-slider-softness-toggle {
+  @apply text-[10px] px-1.5 py-0.5 rounded transition-colors;
+}
+
+.range-slider-softness-toggle-on {
+  @apply bg-accent/20 text-accent;
+}
+
+.range-slider-softness-toggle-off {
+  @apply bg-surface text-text-secondary;
+}
+
 @utility temperature-gradient-track {
   background: linear-gradient(to right, #2d4a74, #3f94b6, #8a8a8a, #c7c549, #c7863c) !important;
 }
