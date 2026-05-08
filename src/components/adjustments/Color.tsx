@@ -568,9 +568,6 @@ const QualifiersPanel = ({ qualifiers, onChange, onDragStateChange }: Qualifiers
           <Text variant={TextVariants.small} color={TextColors.secondary}>
             No qualifiers added. Click + to create one.
           </Text>
-          <Text variant={TextVariants.small} color={TextColors.secondary} className="mt-1">
-            Qualifiers let you target specific colors by Hue, Saturation, and Luminance ranges, and change their Hue, Saturation, and Luminance with shifts.
-          </Text>
         </div>
       ) : (
         qualifiers.map((qualifier, index) => (

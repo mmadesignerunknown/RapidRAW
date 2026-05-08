@@ -499,7 +499,7 @@ const RangeSlider: React.FC<RangeSliderProps> = ({
           style={{ background: gradientColors?.length ? `linear-gradient(to right, ${gradientColors.join(', ')})` : undefined }}
         />
         
-        {/* Unselected range overlays */}
+        {/* Unselected range */}
         <div
           className="absolute top-1/2 h-1.5 -translate-y-1/4 rounded-full pointer-events-none bg-[rgba(0,0,0,0.5)]"
           style={{
@@ -526,7 +526,7 @@ const RangeSlider: React.FC<RangeSliderProps> = ({
         
         {/* Min Handle */}
         <div
-          className={`absolute top-1/2 w-3 h-3 -translate-y-1/2 -translate-x-1/2 rounded-full bg-accent border-2 border-white shadow-md cursor-pointer z-20 ${
+          className={`absolute top-1/2 w-4 h-4 -translate-y-1/2 -translate-x-1/2 rounded-full bg-accent border-2 border-white shadow-md cursor-pointer z-20 ${
             draggingHandle === 'min' ? 'scale-110 bg-accent-hover' : ''
           }`}
           style={{ left: `${minPercent}%` }}
@@ -539,7 +539,7 @@ const RangeSlider: React.FC<RangeSliderProps> = ({
         
         {/* Max Handle */}
         <div
-          className={`absolute top-1/2 w-3 h-3 -translate-y-1/2 -translate-x-1/2 rounded-full bg-accent border-2 border-white shadow-md cursor-pointer z-20 ${
+          className={`absolute top-1/2 w-4 h-4 -translate-y-1/2 -translate-x-1/2 rounded-full bg-accent border-2 border-white shadow-md cursor-pointer z-20 ${
             draggingHandle === 'max' ? 'scale-110 bg-accent-hover' : ''
           }`}
           style={{ left: `${maxPercent}%` }}
