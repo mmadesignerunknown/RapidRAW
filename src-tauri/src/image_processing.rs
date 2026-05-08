@@ -1329,8 +1329,7 @@ pub struct GlobalAdjustments {
     pub glow_amount: f32,
     pub halation_amount: f32,
     pub flare_amount: f32,
-
-    _pad_creative_1: f32,
+    pub sharpness_threshold: f32,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, Pod, Zeroable, Default)]
@@ -1358,7 +1357,7 @@ pub struct MaskAdjustments {
     pub glow_amount: f32,
     pub halation_amount: f32,
     pub flare_amount: f32,
-    _pad1: f32,
+    pub sharpness_threshold: f32,
 
     _pad_cg1: f32,
     _pad_cg2: f32,
@@ -1414,6 +1413,7 @@ struct AdjustmentScales {
     vibrance: f32,
 
     sharpness: f32,
+    sharpness_threshold: f32,
     luma_noise_reduction: f32,
     color_noise_reduction: f32,
     clarity: f32,
@@ -1461,7 +1461,8 @@ const SCALES: AdjustmentScales = AdjustmentScales {
     tint: 100.0,
     vibrance: 100.0,
 
-    sharpness: 40.0,
+    sharpness: 50.0,
+    sharpness_threshold: 100.0,
     luma_noise_reduction: 100.0,
     color_noise_reduction: 100.0,
     clarity: 200.0,
@@ -1652,10 +1653,7 @@ fn calculate_agx_matrices() -> (GpuMat3, GpuMat3) {
     )
 }
 
-pub fn resolve_tonemapper_override(
-    settings: &crate::file_management::AppSettings,
-    is_raw: bool,
-) -> Option<u32> {
+pub fn resolve_tonemapper_override(settings: &crate::AppSettings, is_raw: bool) -> Option<u32> {
     if !settings.tonemapper_override_enabled.unwrap_or(false) {
         return None;
     }
@@ -1674,7 +1672,7 @@ pub fn resolve_tonemapper_override_from_handle(
     app_handle: &tauri::AppHandle,
     is_raw: bool,
 ) -> Option<u32> {
-    let settings = crate::file_management::load_settings(app_handle.clone()).unwrap_or_default();
+    let settings = crate::app_settings::load_settings(app_handle.clone()).unwrap_or_default();
     resolve_tonemapper_override(&settings, is_raw)
 }
 
@@ -1730,9 +1728,9 @@ pub fn apply_cpu_agx_tonemap(image: &mut DynamicImage) {
 
     const LUT_SIZE: usize = 4096;
     let mut curve_lut = [0.0f32; LUT_SIZE];
-    for i in 0..LUT_SIZE {
+    for (i, slot) in curve_lut.iter_mut().enumerate() {
         let x = i as f32 / (LUT_SIZE - 1) as f32;
-        curve_lut[i] = agx_curve_channel(x).max(0.0).powf(AGX_GAMMA);
+        *slot = agx_curve_channel(x).max(0.0).powf(AGX_GAMMA);
     }
 
     let (pipe_to_rendering, rendering_to_pipe) = calculate_agx_matrices_glam();
@@ -1874,6 +1872,19 @@ fn get_global_adjustments_from_json(
     let tone_mapper = js_adjustments["toneMapper"].as_str().unwrap_or("basic");
     let (pipe_to_rendering, rendering_to_pipe) = calculate_agx_matrices();
 
+    let (has_lut, lut_intensity) = if is_visible("effects") {
+        (
+            if js_adjustments["lutPath"].is_string() {
+                1
+            } else {
+                0
+            },
+            js_adjustments["lutIntensity"].as_f64().unwrap_or(100.0) as f32 / 100.0,
+        )
+    } else {
+        (0, 1.0)
+    };
+
     GlobalAdjustments {
         exposure: get_val("basic", "exposure", SCALES.exposure, None),
         brightness: get_val("basic", "brightness", SCALES.brightness, None),
@@ -1902,10 +1913,10 @@ fn get_global_adjustments_from_json(
             None,
         ),
 
-        clarity: get_val("effects", "clarity", SCALES.clarity, None),
-        dehaze: get_val("effects", "dehaze", SCALES.dehaze, None),
-        structure: get_val("effects", "structure", SCALES.structure, None),
-        centré: get_val("effects", "centré", SCALES.centré, None),
+        clarity: get_val("details", "clarity", SCALES.clarity, None),
+        dehaze: get_val("details", "dehaze", SCALES.dehaze, None),
+        structure: get_val("details", "structure", SCALES.structure, None),
+        centré: get_val("details", "centré", SCALES.centré, None),
         vignette_amount: get_val("effects", "vignetteAmount", SCALES.vignette_amount, None),
         vignette_midpoint: get_val(
             "effects",
@@ -1954,12 +1965,9 @@ fn get_global_adjustments_from_json(
         is_raw_image: if is_raw { 1 } else { 0 },
         _pad_ca1: 0.0,
 
-        has_lut: if js_adjustments["lutPath"].is_string() {
-            1
-        } else {
-            0
-        },
-        lut_intensity: js_adjustments["lutIntensity"].as_f64().unwrap_or(100.0) as f32 / 100.0,
+        has_lut,
+        lut_intensity,
+
         tonemapper_mode: tonemapper_override
             .unwrap_or_else(|| if tone_mapper == "agx" { 1 } else { 0 }),
         _pad_lut2: 0.0,
@@ -2033,8 +2041,12 @@ fn get_global_adjustments_from_json(
         glow_amount: get_val("effects", "glowAmount", SCALES.glow, None),
         halation_amount: get_val("effects", "halationAmount", SCALES.halation, None),
         flare_amount: get_val("effects", "flareAmount", SCALES.flares, None),
-
-        _pad_creative_1: 0.0,
+        sharpness_threshold: get_val(
+            "details",
+            "sharpnessThreshold",
+            SCALES.sharpness_threshold,
+            Some(10.0),
+        ),
     }
 }
 
@@ -2104,14 +2116,14 @@ fn get_mask_adjustments_from_json(adj: &serde_json::Value) -> MaskAdjustments {
             SCALES.color_noise_reduction,
         ),
 
-        clarity: get_val("effects", "clarity", SCALES.clarity),
-        dehaze: get_val("effects", "dehaze", SCALES.dehaze),
-        structure: get_val("effects", "structure", SCALES.structure),
+        clarity: get_val("details", "clarity", SCALES.clarity),
+        dehaze: get_val("details", "dehaze", SCALES.dehaze),
+        structure: get_val("details", "structure", SCALES.structure),
 
         glow_amount: get_val("effects", "glowAmount", SCALES.glow),
         halation_amount: get_val("effects", "halationAmount", SCALES.halation),
         flare_amount: get_val("effects", "flareAmount", SCALES.flares),
-        _pad1: 0.0,
+        sharpness_threshold: get_val("details", "sharpnessThreshold", SCALES.sharpness_threshold),
 
         _pad_cg1: 0.0,
         _pad_cg2: 0.0,

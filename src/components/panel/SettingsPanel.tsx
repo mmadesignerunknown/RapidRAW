@@ -20,6 +20,7 @@ import {
   Touchpad,
 } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import { relaunch } from '@tauri-apps/plugin-process';
 import { motion, AnimatePresence } from 'framer-motion';
 import clsx from 'clsx';
@@ -956,6 +957,18 @@ export default function SettingsPanel({
                       />
                     </SettingItem>
 
+                    <SettingItem
+                      label="Focus Mode"
+                      description="Helps you focus by automatically closing other panels when you open a new one."
+                    >
+                      <Switch
+                        checked={appSettings?.enableFocusMode ?? false}
+                        id="focus-mode-toggle"
+                        label="Enable Focus Mode"
+                        onChange={(checked) => onSettingsChange({ ...appSettings, enableFocusMode: checked })}
+                      />
+                    </SettingItem>
+
                     <SettingItem label="Font" description="Change the application font.">
                       <Dropdown
                         onChange={(value: any) => onSettingsChange({ ...appSettings, fontFamily: value })}
@@ -967,6 +980,23 @@ export default function SettingsPanel({
                         triggerClassName="bg-bg-primary"
                       />
                     </SettingItem>
+
+                    {osPlatform === 'linux' && (
+                      <SettingItem
+                        label="Native Titlebar"
+                        description="Use your system's default window titlebar instead of RapidRAW's custom one."
+                      >
+                        <Switch
+                          checked={appSettings?.decorations ?? false}
+                          id="native-titlebar-toggle"
+                          label="Enable OS Titlebar"
+                          onChange={(checked) => {
+                            onSettingsChange({ ...appSettings, decorations: checked });
+                            getCurrentWindow().setDecorations(checked).catch(console.error);
+                          }}
+                        />
+                      </SettingItem>
+                    )}
                   </div>
                 </div>
 
@@ -1014,6 +1044,19 @@ export default function SettingsPanel({
                           adjustmentVisibility: {
                             ...(appSettings?.adjustmentVisibility || adjustmentVisibilityDefaults),
                             colorCalibration: checked,
+                          },
+                        })
+                      }
+                    />
+                    <Switch
+                      label="Noise Reduction"
+                      checked={appSettings?.adjustmentVisibility?.noiseReduction ?? true}
+                      onChange={(checked) =>
+                        onSettingsChange({
+                          ...appSettings,
+                          adjustmentVisibility: {
+                            ...(appSettings?.adjustmentVisibility || adjustmentVisibilityDefaults),
+                            noiseReduction: checked,
                           },
                         })
                       }
