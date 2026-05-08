@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
@@ -52,32 +52,17 @@ import {
   getSubMaskName,
 } from './Masks';
 import { Adjustments, AiPatch } from '../../../utils/adjustments';
-import { BrushSettings, OPTION_SEPARATOR, SelectedImage } from '../../ui/AppProperties';
+import { OPTION_SEPARATOR } from '../../ui/AppProperties';
 import { createSubMask } from '../../../utils/maskUtils';
 import Text from '../../ui/Text';
 import { TEXT_COLOR_KEYS, TextColors, TextVariants, TextWeights } from '../../../types/typography';
 
-interface AiPanelProps {
-  adjustments: Adjustments;
-  activePatchContainerId: string | null;
-  activeSubMaskId: string | null;
-  aiModelDownloadStatus: string | null;
-  brushSettings: BrushSettings | null;
-  isAIConnectorConnected: boolean;
-  isGeneratingAi: boolean;
-  isGeneratingAiMask: boolean;
-  onDeletePatch(id: string): void;
-  onGenerateAiForegroundMask(id: string): void;
-  onGenerativeReplace(patchId: string, prompt: any, useFastInpaint: boolean): void;
-  onSelectPatchContainer(id: string | null): void;
-  onSelectSubMask(id: string | null): void;
-  onTogglePatchVisibility(id: string): void;
-  selectedImage: SelectedImage;
-  setAdjustments(updater: any): void;
-  setBrushSettings(brushSettings: BrushSettings | null): void;
-  setCustomEscapeHandler(handler: any): void;
-  onDragStateChange?: (isDragging: boolean) => void;
-}
+// NEW IMPORTS
+import { useEditorStore } from '../../../store/useEditorStore';
+import { useProcessStore } from '../../../store/useProcessStore';
+import { useUIStore } from '../../../store/useUIStore';
+import { useEditorActions } from '../../../hooks/useEditorActions';
+import { useAiMasking } from '../../../hooks/useAiMasking';
 
 interface ConnectionStatusProps {
   isConnected: boolean;
@@ -222,27 +207,39 @@ const ConnectionStatus = ({ isConnected }: ConnectionStatusProps) => {
   );
 };
 
-export default function AIPanel({
-  adjustments,
-  setAdjustments,
-  selectedImage,
-  isAIConnectorConnected,
-  isGeneratingAi,
-  onGenerativeReplace,
-  onDeletePatch,
-  onTogglePatchVisibility: _onTogglePatchVisibility,
-  activePatchContainerId,
-  onSelectPatchContainer,
-  activeSubMaskId,
-  onSelectSubMask,
-  brushSettings,
-  setBrushSettings,
-  isGeneratingAiMask,
-  aiModelDownloadStatus,
-  onGenerateAiForegroundMask,
-  setCustomEscapeHandler,
-  onDragStateChange,
-}: AiPanelProps) {
+export default function AIPanel() {
+  const activePatchContainerId = useEditorStore((s) => s.activeAiPatchContainerId);
+  const activeSubMaskId = useEditorStore((s) => s.activeAiSubMaskId);
+  const adjustments = useEditorStore((s) => s.adjustments);
+  const brushSettings = useEditorStore((s) => s.brushSettings);
+  const isAIConnectorConnected = useEditorStore((s) => s.isAIConnectorConnected);
+  const isGeneratingAi = useEditorStore((s) => s.isGeneratingAi);
+  const isGeneratingAiMask = useEditorStore((s) => s.isGeneratingAiMask);
+  const selectedImage = useEditorStore((s) => s.selectedImage);
+  const setEditor = useEditorStore((s) => s.setEditor);
+
+  const aiModelDownloadStatus = useProcessStore((s) => s.aiModelDownloadStatus);
+  const setCustomEscapeHandler = useUIStore((s) => s.setCustomEscapeHandler);
+
+  const { setAdjustments } = useEditorActions();
+  const { handleGenerativeReplace, handleDeleteAiPatch, handleGenerateAiForegroundMask } = useAiMasking();
+
+  const setBrushSettings = useCallback(
+    (updater: any) =>
+      setEditor((state) => ({ brushSettings: typeof updater === 'function' ? updater(state.brushSettings) : updater })),
+    [setEditor],
+  );
+
+  const onSelectPatchContainer = useCallback(
+    (id: string | null) => setEditor({ activeAiPatchContainerId: id }),
+    [setEditor],
+  );
+  const onSelectSubMask = useCallback((id: string | null) => setEditor({ activeAiSubMaskId: id }), [setEditor]);
+  const onDragStateChange = useCallback(
+    (isDragging: boolean) => setEditor({ isSliderDragging: isDragging }),
+    [setEditor],
+  );
+
   const [expandedContainers, setExpandedContainers] = useState<Set<string>>(new Set());
   const [activeDragItem, setActiveDragItem] = useState<DragData | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
@@ -353,6 +350,7 @@ export default function AIPanel({
   };
 
   const createMaskLogic = (type: Mask, mode: SubMaskMode = SubMaskMode.Additive) => {
+    if (!selectedImage) return createSubMask(type, {} as any, mode);
     const subMask = createSubMask(type, selectedImage, mode);
 
     const steps = adjustments?.orientationSteps || 0;
@@ -418,7 +416,7 @@ export default function AIPanel({
     onSelectSubMask(subMask.id);
     setExpandedContainers((prev) => new Set(prev).add(newContainer.id));
 
-    if (type === Mask.AiForeground) onGenerateAiForegroundMask(subMask.id);
+    if (type === Mask.AiForeground) handleGenerateAiForegroundMask(subMask.id);
   };
 
   const handleAddSubMask = (
@@ -443,7 +441,7 @@ export default function AIPanel({
     onSelectPatchContainer(containerId);
     onSelectSubMask(subMask.id);
     setExpandedContainers((prev) => new Set(prev).add(containerId));
-    if (type === Mask.AiForeground) onGenerateAiForegroundMask(subMask.id);
+    if (type === Mask.AiForeground) handleGenerateAiForegroundMask(subMask.id);
   };
 
   const handleAddAiContextMenu = (event: React.MouseEvent, targetContainerId?: string | null) => {
@@ -472,10 +470,8 @@ export default function AIPanel({
     let options: any[];
 
     if (!targetContainerId) {
-      // For a brand new mask, just show the types directly
       options = buildMenu(AI_PANEL_CREATION_TYPES, SubMaskMode.Additive);
     } else {
-      // For an existing mask, show the types directly at the top level
       options = buildMenu(AI_SUB_MASK_COMPONENT_TYPES, SubMaskMode.Additive);
 
       if (hasComponents) {
@@ -515,7 +511,7 @@ export default function AIPanel({
 
   const handleDeleteContainer = (id: string) => {
     if (activePatchContainerId === id) handleDeselect();
-    onDeletePatch(id);
+    handleDeleteAiPatch(id);
   };
 
   const handleDeleteSubMask = (containerId: string, subMaskId: string) => {
@@ -810,11 +806,7 @@ export default function AIPanel({
       onDragEnd={handleDragEnd}
       collisionDetection={pointerWithin}
     >
-      <div
-        className="flex flex-col h-full select-none overflow-hidden"
-        onClick={handleDeselect}
-        onContextMenu={handlePanelContextMenu}
-      >
+      <div className="flex flex-col h-full select-none overflow-hidden" onContextMenu={handlePanelContextMenu}>
         <div className="p-4 flex justify-between items-center shrink-0 border-b border-surface">
           <Text variant={TextVariants.title}>Inpainting</Text>
           <button
@@ -826,7 +818,7 @@ export default function AIPanel({
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto overflow-x-hidden flex flex-col min-h-0 p-4 gap-8">
+        <div className="flex-1 overflow-y-auto overflow-x-hidden flex flex-col min-h-0 p-4">
           <AnimatePresence mode="wait">
             {(adjustments.aiPatches || []).length === 0 ? (
               <motion.div
@@ -836,6 +828,7 @@ export default function AIPanel({
                 exit={{ opacity: 0 }}
                 transition={{ duration: 0.2 }}
                 className="z-10 shrink-0"
+                onClick={handleDeselect}
               >
                 {!selectedImage ? (
                   <Text
@@ -874,6 +867,7 @@ export default function AIPanel({
                 exit={{ opacity: 0 }}
                 transition={{ duration: 0.2 }}
                 className={`flex flex-col transition-colors ${isRootOver ? 'bg-surface' : ''}`}
+                onClick={handleDeselect}
               >
                 <Text variant={TextVariants.heading} className="mb-2">
                   Edits
@@ -951,6 +945,8 @@ export default function AIPanel({
             )}
           </AnimatePresence>
 
+          <div className="h-4 shrink-0 w-full" onClick={handleDeselect} />
+
           <AnimatePresence>
             {isSettingsPanelEverOpened && (
               <motion.div
@@ -974,7 +970,7 @@ export default function AIPanel({
                   isAIConnectorConnected={isAIConnectorConnected}
                   isGeneratingAi={isGeneratingAi}
                   isGeneratingAiMask={isGeneratingAiMask}
-                  onGenerativeReplace={onGenerativeReplace}
+                  onGenerativeReplace={handleGenerativeReplace}
                   collapsibleState={collapsibleState}
                   setCollapsibleState={setCollapsibleState}
                 />
@@ -1273,7 +1269,7 @@ function ContainerRow({
             initial={{ height: 0, opacity: 0 }}
             animate={{ height: 'auto', opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
-            className="overflow-hidden pl-2 border-l border-border-color/20 ml-3.75"
+            className="overflow-hidden pl-2 border-l-[1.5px] border-border-color/50 ml-3.75"
             layout
           >
             <AnimatePresence mode="popLayout" initial={false}>
