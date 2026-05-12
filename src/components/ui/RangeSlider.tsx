@@ -20,6 +20,7 @@ type Handle = 'min' | 'max';
 const DOUBLE_CLICK_THRESHOLD_MS = 300;
 const FINE_ADJUSTMENT_MULTIPLIER = 0.2;
 const TOUCH_DRAG_THRESHOLD_PX = 10;
+const TOUCH_THUMB_HIT_RADIUS_PX = 24;
 
 const RangeSlider: React.FC<RangeSliderProps> = ({
   label,
@@ -35,27 +36,33 @@ const RangeSlider: React.FC<RangeSliderProps> = ({
   gradientColors,
   trackClassName,
 }) => {
-  const [min, setMin] = useState(initialMin);
-  const [max, setMax] = useState(initialMax);
+  // Display values (for animation/live updates)
+  const [displayMin, setDisplayMin] = useState(initialMin);
+  const [displayMax, setDisplayMax] = useState(initialMax);
+  // Actual values (target for animation)
+  const [valueMin, setValueMin] = useState(initialMin);
+  const [valueMax, setValueMax] = useState(initialMax);
   const [draggingHandle, setDraggingHandle] = useState<Handle | null>(null);
+  const animationFrameRef = useRef<number | undefined>(undefined);
   const [isEditingMin, setIsEditingMin] = useState(false);
   const [isEditingMax, setIsEditingMax] = useState(false);
-  const [editMinValue, setEditMinValue] = useState<string>(String(initialMin));
-  const [editMaxValue, setEditMaxValue] = useState<string>(String(initialMax));
-  const [isLabelHovered, setIsLabelHovered] = useState(false);
-  
-  const sliderRef = useRef<HTMLDivElement>(null);
+  const [inputValue, setInputValue] = useState<string>('');
   const minInputRef = useRef<HTMLInputElement | null>(null);
   const maxInputRef = useRef<HTMLInputElement | null>(null);
+  const [isLabelHovered, setIsLabelHovered] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
   const lastUpTime = useRef(0);
   const lastPointerXRef = useRef<number>(0);
   const accumulatedValueRef = useRef<number>(0);
-  const dragStartValuesRef = useRef<{ min: number; max: number } | null>(null);
   const pendingTouchRef = useRef<{
     startX: number;
     startY: number;
+    latestX: number;
+    startMin: number;
+    startMax: number;
     handle: Handle;
   } | null>(null);
+  const suppressTouchChangeRef = useRef(false);
 
   const defaultMin = defaultValue?.min ?? minLimit;
   const defaultMax = defaultValue?.max ?? maxLimit;
@@ -72,27 +79,76 @@ const RangeSlider: React.FC<RangeSliderProps> = ({
     [minLimit, maxLimit, step, decimalPlaces]
   );
 
+  const onChangeRef = useRef(onChange);
+  const snapToStepRef = useRef(snapToStep);
+  const rangeRef = useRef({ min: minLimit, max: maxLimit });
+
+  onChangeRef.current = onChange;
+  snapToStepRef.current = snapToStep;
+  rangeRef.current = { min: minLimit, max: maxLimit };
+
+  const isDragging = draggingHandle !== null;
+
+  useEffect(() => {
+    onDragStateChange(isDragging);
+  }, [isDragging, onDragStateChange]);
+
   // Update internal state when props change
   useEffect(() => {
-    setMin(initialMin);
-    setMax(initialMax);
+    setValueMin(initialMin);
+    setValueMax(initialMax);
   }, [initialMin, initialMax]);
 
+  // ANIMATION - EXACT COPY from Slider.tsx
   useEffect(() => {
-    onDragStateChange(draggingHandle !== null);
-  }, [draggingHandle, onDragStateChange]);
+    if (isDragging) {
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
+      return;
+    }
+
+    const startMin = displayMin;
+    const endMin = valueMin;
+    const startMax = displayMax;
+    const endMax = valueMax;
+    const duration = 300;
+    let startTime: number | null = null;
+
+    const easeInOut = (t: number) => t * t * (3 - 2 * t);
+
+    const animate = (timestamp: number) => {
+      if (!startTime) {
+        startTime = timestamp;
+      }
+
+      const progress = timestamp - startTime;
+      const linearFraction = Math.min(progress / duration, 1);
+      const easedFraction = easeInOut(linearFraction);
+      const currentMin = startMin + (endMin - startMin) * easedFraction;
+      const currentMax = startMax + (endMax - startMax) * easedFraction;
+      setDisplayMin(currentMin);
+      setDisplayMax(currentMax);
+
+      if (linearFraction < 1) {
+        animationFrameRef.current = requestAnimationFrame(animate);
+      }
+    };
+
+    animationFrameRef.current = requestAnimationFrame(animate);
+
+    return () => {
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
+    };
+  }, [valueMin, valueMax, isDragging]);
 
   useEffect(() => {
-    if (!isEditingMin) {
-      setEditMinValue(String(min));
+    if (!isEditingMin && !isEditingMax) {
+      setInputValue('');
     }
-  }, [min, isEditingMin]);
-
-  useEffect(() => {
-    if (!isEditingMax) {
-      setEditMaxValue(String(max));
-    }
-  }, [max, isEditingMax]);
+  }, [isEditingMin, isEditingMax]);
 
   useEffect(() => {
     if (isEditingMin && minInputRef.current) {
@@ -110,16 +166,14 @@ const RangeSlider: React.FC<RangeSliderProps> = ({
   }, [minLimit, maxLimit]);
 
   const handleReset = () => {
-    const newMin = defaultMin;
-    const newMax = defaultMax;
-    setMin(newMin);
-    setMax(newMax);
-    onChange({ min: newMin, max: newMax });
+    setValueMin(defaultMin);
+    setValueMax(defaultMax);
+    onChange({ min: defaultMin, max: defaultMax });
   };
 
   // Wheel support with Shift key
   useEffect(() => {
-    const sliderElement = sliderRef.current;
+    const sliderElement = containerRef.current;
     if (!sliderElement) return;
 
     const handleWheel = (event: WheelEvent) => {
@@ -128,30 +182,29 @@ const RangeSlider: React.FC<RangeSliderProps> = ({
       }
 
       event.preventDefault();
-      const direction = -Math.sign(event.deltaY);
+      const direction = -Math.sign(event.deltaY || event.deltaX);
       
-      // Determine which handle is closer to mouse position
       const rect = sliderElement.getBoundingClientRect();
       const mouseX = event.clientX;
-      const minX = rect.left + (getPercent(min) * rect.width) / 100;
-      const maxX = rect.left + (getPercent(max) * rect.width) / 100;
+      const minX = rect.left + (getPercent(valueMin) * rect.width) / 100;
+      const maxX = rect.left + (getPercent(valueMax) * rect.width) / 100;
       
       const distToMin = Math.abs(mouseX - minX);
       const distToMax = Math.abs(mouseX - maxX);
       
       if (distToMin < distToMax) {
-        const newMin = snapToStep(min + direction * step * 2);
-        const clampedMin = Math.max(minLimit, Math.min(newMin, max - step));
-        if (clampedMin !== min) {
-          setMin(clampedMin);
-          onChange({ min: clampedMin, max });
+        const newMin = snapToStep(valueMin + direction * step * 2);
+        const clampedMin = Math.max(minLimit, Math.min(newMin, valueMax - step));
+        if (clampedMin !== valueMin) {
+          setValueMin(clampedMin);
+          onChange({ min: clampedMin, max: valueMax });
         }
       } else {
-        const newMax = snapToStep(max + direction * step * 2);
-        const clampedMax = Math.min(maxLimit, Math.max(newMax, min + step));
-        if (clampedMax !== max) {
-          setMax(clampedMax);
-          onChange({ min, max: clampedMax });
+        const newMax = snapToStep(valueMax + direction * step * 2);
+        const clampedMax = Math.min(maxLimit, Math.max(newMax, valueMin + step));
+        if (clampedMax !== valueMax) {
+          setValueMax(clampedMax);
+          onChange({ min: valueMin, max: clampedMax });
         }
       }
     };
@@ -161,13 +214,13 @@ const RangeSlider: React.FC<RangeSliderProps> = ({
     return () => {
       sliderElement.removeEventListener('wheel', handleWheel);
     };
-  }, [min, max, minLimit, maxLimit, step, snapToStep, onChange, getPercent]);
+  }, [valueMin, valueMax, minLimit, maxLimit, step, snapToStep, onChange, getPercent]);
 
   // Drag handling
   useEffect(() => {
     if (!draggingHandle) return;
 
-    const sliderElement = sliderRef.current;
+    const sliderElement = containerRef.current;
     if (!sliderElement) return;
     const sliderWidth = sliderElement.getBoundingClientRect().width || 1;
 
@@ -193,9 +246,9 @@ const RangeSlider: React.FC<RangeSliderProps> = ({
       let newValue = prevAccumulated + deltaValue;
 
       if (draggingHandle === 'min') {
-        newValue = Math.max(minLimit, Math.min(newValue, max - step));
+        newValue = Math.max(minLimit, Math.min(newValue, valueMax - step));
       } else {
-        newValue = Math.max(min + step, Math.min(newValue, maxLimit));
+        newValue = Math.max(valueMin + step, Math.min(newValue, maxLimit));
       }
 
       accumulatedValueRef.current = newValue;
@@ -210,17 +263,21 @@ const RangeSlider: React.FC<RangeSliderProps> = ({
       const snappedValue = snapToStep(accumulatedValueRef.current);
 
       if (draggingHandle === 'min') {
-        setMin(snappedValue);
-        onChange({ min: snappedValue, max });
+        setDisplayMin(snappedValue);
+        setValueMin(snappedValue);
+        onChange({ min: snappedValue, max: valueMax });
       } else {
-        setMax(snappedValue);
-        onChange({ min, max: snappedValue });
+        setDisplayMax(snappedValue);
+        setValueMax(snappedValue);
+        onChange({ min: valueMin, max: snappedValue });
       }
     };
 
     const handlePointerUp = () => {
       lastUpTime.current = Date.now();
       setDraggingHandle(null);
+      pendingTouchRef.current = null;
+      suppressTouchChangeRef.current = false;
     };
 
     window.addEventListener('mousemove', handlePointerMove, { passive: false });
@@ -236,47 +293,123 @@ const RangeSlider: React.FC<RangeSliderProps> = ({
       window.removeEventListener('touchend', handlePointerUp);
       window.removeEventListener('touchcancel', handlePointerUp);
     };
-  }, [draggingHandle, min, max, minLimit, maxLimit, step, snapToStep, onChange]);
+  }, [draggingHandle, valueMin, valueMax, minLimit, maxLimit, step, snapToStep, onChange]);
 
-  const handleMouseDown = (handle: Handle) => (e: React.MouseEvent<HTMLDivElement>) => {
+  const handleMinMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
     if (Date.now() - lastUpTime.current < DOUBLE_CLICK_THRESHOLD_MS) {
       e.preventDefault();
       return;
     }
     e.preventDefault();
-    e.stopPropagation();
 
-    const rect = sliderRef.current?.getBoundingClientRect();
+    const rect = containerRef.current?.getBoundingClientRect();
     if (rect) {
       const fraction = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
       let rawValue = minLimit + fraction * (maxLimit - minLimit);
+      rawValue = Math.min(rawValue, valueMax - step);
+      const snappedValue = snapToStep(rawValue);
       
-      accumulatedValueRef.current = handle === 'min' ? min : max;
+      accumulatedValueRef.current = snappedValue;
       lastPointerXRef.current = e.clientX;
-      dragStartValuesRef.current = { min, max };
-      setDraggingHandle(handle);
+
+      setDraggingHandle('min');
+      setDisplayMin(snappedValue);
+      setValueMin(snappedValue);
+      onChange({ min: snappedValue, max: valueMax });
     }
   };
 
-  const handleTouchStart = (handle: Handle) => (e: React.TouchEvent<HTMLDivElement>) => {
+  const handleMaxMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (Date.now() - lastUpTime.current < DOUBLE_CLICK_THRESHOLD_MS) {
+      e.preventDefault();
+      return;
+    }
+    e.preventDefault();
+
+    const rect = containerRef.current?.getBoundingClientRect();
+    if (rect) {
+      const fraction = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+      let rawValue = minLimit + fraction * (maxLimit - minLimit);
+      rawValue = Math.max(rawValue, valueMin + step);
+      const snappedValue = snapToStep(rawValue);
+      
+      accumulatedValueRef.current = snappedValue;
+      lastPointerXRef.current = e.clientX;
+
+      setDraggingHandle('max');
+      setDisplayMax(snappedValue);
+      setValueMax(snappedValue);
+      onChange({ min: valueMin, max: snappedValue });
+    }
+  };
+
+  // Touch support with hit radius detection (same as Slider.tsx)
+  const handleMinTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
     if (e.touches.length === 0) return;
     e.preventDefault();
 
     const touch = e.touches[0];
+    suppressTouchChangeRef.current = true;
+
+    const container = containerRef.current;
+    if (!container) return;
+
+    const rect = container.getBoundingClientRect();
+    const minPercent = getPercent(valueMin);
+    const minThumbX = rect.left + (minPercent / 100) * rect.width;
+
+    // Check if touch is within hit radius of the min thumb
+    if (Math.abs(touch.clientX - minThumbX) > TOUCH_THUMB_HIT_RADIUS_PX) {
+      pendingTouchRef.current = null;
+      return;
+    }
+
     pendingTouchRef.current = {
       startX: touch.clientX,
       startY: touch.clientY,
-      handle,
+      latestX: touch.clientX,
+      startMin: valueMin,
+      startMax: valueMax,
+      handle: 'min',
     };
   };
 
-  const handleTouchMove = (handle: Handle) => (e: React.TouchEvent<HTMLDivElement>) => {
-    if (draggingHandle || !pendingTouchRef.current || e.touches.length === 0) return;
+  const handleMaxTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
+    if (e.touches.length === 0) return;
+    e.preventDefault();
+
+    const touch = e.touches[0];
+    suppressTouchChangeRef.current = true;
+
+    const container = containerRef.current;
+    if (!container) return;
+
+    const rect = container.getBoundingClientRect();
+    const maxPercent = getPercent(valueMax);
+    const maxThumbX = rect.left + (maxPercent / 100) * rect.width;
+
+    // Check if touch is within hit radius of the max thumb
+    if (Math.abs(touch.clientX - maxThumbX) > TOUCH_THUMB_HIT_RADIUS_PX) {
+      pendingTouchRef.current = null;
+      return;
+    }
+
+    pendingTouchRef.current = {
+      startX: touch.clientX,
+      startY: touch.clientY,
+      latestX: touch.clientX,
+      startMin: valueMin,
+      startMax: valueMax,
+      handle: 'max',
+    };
+  };
+
+  const handleTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
+    if (isDragging || !pendingTouchRef.current || e.touches.length === 0) return;
 
     const touch = e.touches[0];
     const pendingTouch = pendingTouchRef.current;
-    
-    if (pendingTouch.handle !== handle) return;
+    pendingTouch.latestX = touch.clientX;
 
     const deltaX = touch.clientX - pendingTouch.startX;
     const deltaY = touch.clientY - pendingTouch.startY;
@@ -296,21 +429,23 @@ const RangeSlider: React.FC<RangeSliderProps> = ({
       return;
     }
 
-    const rect = sliderRef.current?.getBoundingClientRect();
-    if (!rect) return;
+    const container = containerRef.current;
+    if (!container) return;
 
-    const fraction = Math.max(0, Math.min(1, (touch.clientX - rect.left) / rect.width));
-    let rawValue = minLimit + fraction * (maxLimit - minLimit);
+    const rect = container.getBoundingClientRect();
+    const totalWidth = rect.width;
     
-    if (handle === 'min') {
-      rawValue = Math.min(rawValue, max - step);
+    let rawValue;
+    if (pendingTouch.handle === 'min') {
+      rawValue = pendingTouch.startMin + (deltaX / totalWidth) * (maxLimit - minLimit);
+      rawValue = Math.max(minLimit, Math.min(valueMax - step, rawValue));
     } else {
-      rawValue = Math.max(rawValue, min + step);
+      rawValue = pendingTouch.startMax + (deltaX / totalWidth) * (maxLimit - minLimit);
+      rawValue = Math.max(valueMin + step, Math.min(maxLimit, rawValue));
     }
     
     const snappedValue = snapToStep(rawValue);
 
-    accumulatedValueRef.current = handle === 'min' ? min : max;
     lastPointerXRef.current = touch.clientX;
     pendingTouchRef.current = null;
 
@@ -318,96 +453,99 @@ const RangeSlider: React.FC<RangeSliderProps> = ({
       e.preventDefault();
     }
 
-    setDraggingHandle(handle);
+    setDraggingHandle(pendingTouch.handle);
 
-    if (handle === 'min') {
-      setMin(snappedValue);
-      onChange({ min: snappedValue, max });
+    if (pendingTouch.handle === 'min') {
+      setDisplayMin(snappedValue);
+      setValueMin(snappedValue);
+      onChange({ min: snappedValue, max: valueMax });
     } else {
-      setMax(snappedValue);
-      onChange({ min, max: snappedValue });
+      setDisplayMax(snappedValue);
+      setValueMax(snappedValue);
+      onChange({ min: valueMin, max: snappedValue });
     }
   };
 
   const handleTouchEnd = () => {
     pendingTouchRef.current = null;
+    suppressTouchChangeRef.current = false;
     if (draggingHandle) {
       setDraggingHandle(null);
     }
   };
 
-  const handleMinEditClick = () => {
+  const handleMinValueClick = () => {
+    setInputValue(String(valueMin));
     setIsEditingMin(true);
   };
 
-  const handleMaxEditClick = () => {
+  const handleMaxValueClick = () => {
+    setInputValue(String(valueMax));
     setIsEditingMax(true);
   };
 
   const handleMinInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setEditMinValue(e.target.value);
+    setInputValue(e.target.value);
   };
 
   const handleMaxInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setEditMaxValue(e.target.value);
+    setInputValue(e.target.value);
   };
 
-  const handleMinCommit = () => {
-    let newValue = parseFloat(editMinValue);
+  const handleMinInputCommit = () => {
+    let newValue = parseFloat(inputValue);
     if (isNaN(newValue)) {
-      newValue = min;
+      newValue = valueMin;
     } else {
-      newValue = Math.max(minLimit, Math.min(newValue, max - step));
+      newValue = Math.max(minLimit, Math.min(valueMax - step, newValue));
       newValue = snapToStep(newValue);
     }
-    setMin(newValue);
-    onChange({ min: newValue, max });
+    setValueMin(newValue);
+    onChange({ min: newValue, max: valueMax });
     setIsEditingMin(false);
   };
 
-  const handleMaxCommit = () => {
-    let newValue = parseFloat(editMaxValue);
+  const handleMaxInputCommit = () => {
+    let newValue = parseFloat(inputValue);
     if (isNaN(newValue)) {
-      newValue = max;
+      newValue = valueMax;
     } else {
-      newValue = Math.max(min + step, Math.min(newValue, maxLimit));
+      newValue = Math.max(valueMin + step, Math.min(maxLimit, newValue));
       newValue = snapToStep(newValue);
     }
-    setMax(newValue);
-    onChange({ min, max: newValue });
+    setValueMax(newValue);
+    onChange({ min: valueMin, max: newValue });
     setIsEditingMax(false);
   };
 
-  const handleMinKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+  const handleMinInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
-      handleMinCommit();
+      handleMinInputCommit();
       e.currentTarget.blur();
     } else if (e.key === 'Escape') {
-      setEditMinValue(String(min));
       setIsEditingMin(false);
       e.currentTarget.blur();
     }
   };
 
-  const handleMaxKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+  const handleMaxInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
-      handleMaxCommit();
+      handleMaxInputCommit();
       e.currentTarget.blur();
     } else if (e.key === 'Escape') {
-      setEditMaxValue(String(max));
       setIsEditingMax(false);
       e.currentTarget.blur();
     }
   };
 
-  const minPercent = getPercent(min);
-  const maxPercent = getPercent(max);
+  const minPercent = getPercent(displayMin);
+  const maxPercent = getPercent(displayMax);
   
-  const numericMin = isNaN(Number(min)) ? 0 : Number(min);
-  const numericMax = isNaN(Number(max)) ? 0 : Number(max);
+  const numericMin = isNaN(Number(valueMin)) ? 0 : Number(valueMin);
+  const numericMax = isNaN(Number(valueMax)) ? 0 : Number(valueMax);
 
   return (
-    <div className="mb-4 group" ref={sliderRef}>
+    <div className="mb-4 group" ref={containerRef}>
       <div className="flex justify-between items-center mb-1">
         <div
           className={`grid ${typeof label === 'string' ? 'cursor-pointer' : ''}`}
@@ -441,19 +579,19 @@ const RangeSlider: React.FC<RangeSliderProps> = ({
               <input
                 ref={minInputRef}
                 className="w-full text-sm text-right bg-card-active border border-gray-500 rounded-sm px-1 py-0 outline-none focus:ring-1 focus:ring-blue-500 text-text-primary"
-                max={max - step}
+                max={valueMax - step}
                 min={minLimit}
-                onBlur={handleMinCommit}
+                onBlur={handleMinInputCommit}
                 onChange={handleMinInputChange}
-                onKeyDown={handleMinKeyDown}
+                onKeyDown={handleMinInputKeyDown}
                 step={step}
                 type="number"
-                value={editMinValue}
+                value={inputValue}
               />
             ) : (
               <span
                 className="text-sm text-text-primary w-full text-right select-none cursor-text"
-                onClick={handleMinEditClick}
+                onClick={handleMinValueClick}
                 onDoubleClick={handleReset}
                 data-tooltip="Click to edit"
               >
@@ -468,18 +606,18 @@ const RangeSlider: React.FC<RangeSliderProps> = ({
                 ref={maxInputRef}
                 className="w-full text-sm text-right bg-card-active border border-gray-500 rounded-sm px-1 py-0 outline-none focus:ring-1 focus:ring-blue-500 text-text-primary"
                 max={maxLimit}
-                min={min + step}
-                onBlur={handleMaxCommit}
+                min={valueMin + step}
+                onBlur={handleMaxInputCommit}
                 onChange={handleMaxInputChange}
-                onKeyDown={handleMaxKeyDown}
+                onKeyDown={handleMaxInputKeyDown}
                 step={step}
                 type="number"
-                value={editMaxValue}
+                value={inputValue}
               />
             ) : (
               <span
                 className="text-sm text-text-primary w-full text-right select-none cursor-text"
-                onClick={handleMaxEditClick}
+                onClick={handleMaxValueClick}
                 onDoubleClick={handleReset}
                 data-tooltip="Click to edit"
               >
@@ -527,12 +665,12 @@ const RangeSlider: React.FC<RangeSliderProps> = ({
         {/* Min Handle */}
         <div
           className={`absolute top-1/2 w-4 h-4 -translate-y-1/2 -translate-x-1/2 rounded-full bg-accent border-2 border-white shadow-md cursor-pointer z-20 ${
-            draggingHandle === 'min' ? 'scale-110 bg-accent-hover' : ''
+            draggingHandle === 'min' ? 'scale-110' : ''
           }`}
           style={{ left: `${minPercent}%` }}
-          onMouseDown={handleMouseDown('min')}
-          onTouchStart={handleTouchStart('min')}
-          onTouchMove={handleTouchMove('min')}
+          onMouseDown={handleMinMouseDown}
+          onTouchStart={handleMinTouchStart}
+          onTouchMove={handleTouchMove}
           onTouchEnd={handleTouchEnd}
           onTouchCancel={handleTouchEnd}
         />
@@ -540,12 +678,12 @@ const RangeSlider: React.FC<RangeSliderProps> = ({
         {/* Max Handle */}
         <div
           className={`absolute top-1/2 w-4 h-4 -translate-y-1/2 -translate-x-1/2 rounded-full bg-accent border-2 border-white shadow-md cursor-pointer z-20 ${
-            draggingHandle === 'max' ? 'scale-110 bg-accent-hover' : ''
+            draggingHandle === 'max' ? 'scale-110' : ''
           }`}
           style={{ left: `${maxPercent}%` }}
-          onMouseDown={handleMouseDown('max')}
-          onTouchStart={handleTouchStart('max')}
-          onTouchMove={handleTouchMove('max')}
+          onMouseDown={handleMaxMouseDown}
+          onTouchStart={handleMaxTouchStart}
+          onTouchMove={handleTouchMove}
           onTouchEnd={handleTouchEnd}
           onTouchCancel={handleTouchEnd}
         />
