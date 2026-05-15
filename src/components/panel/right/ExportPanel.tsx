@@ -27,16 +27,17 @@ import { useExportSettings } from '../../../hooks/useExportSettings';
 import { useOsPlatform } from '../../../hooks/useOsPlatform';
 import Text from '../../ui/Text';
 import { TextColors, TextVariants, TextWeights } from '../../../types/typography';
+import { useShallow } from 'zustand/react/shallow';
+import { useEditorStore } from '../../../store/useEditorStore';
 
 interface ExportPanelProps {
-  adjustments: Adjustments;
   exportState: ExportState;
   multiSelectedPaths: Array<string>;
   selectedImage: SelectedImage;
   setExportState(state: any): void;
   appSettings: AppSettings | null;
   onSettingsChange: (settings: AppSettings) => void;
-  rootPath: string | null;
+  rootPaths: string[];
 }
 
 interface SectionProps {
@@ -170,14 +171,13 @@ const resizeModeOptions = [
 ];
 
 export default function ExportPanel({
-  adjustments,
   exportState,
   multiSelectedPaths,
   selectedImage,
   setExportState,
   appSettings,
   onSettingsChange,
-  rootPath,
+  rootPaths,
 }: ExportPanelProps) {
   const {
     fileFormat,
@@ -219,6 +219,12 @@ export default function ExportPanel({
     handleApplyPreset,
     currentSettingsObject,
   } = useExportSettings();
+
+  const { adjustments } = useEditorStore(
+    useShallow((state) => ({
+      adjustments: state.adjustments,
+    })),
+  );
 
   const [isAdvancedExpanded, setIsAdvancedExpanded] = useState(false);
   const initDone = useRef(false);
@@ -457,7 +463,7 @@ export default function ExportPanel({
             outputFolder: outputFolder as string,
             outputFormat: FILE_FORMATS.find((f: FileFormat) => f.id === fileFormat)?.extensions[0],
             paths: pathsToExport,
-            baseOriginFolder: rootPath,
+            baseOriginFolders: rootPaths,
           });
         }
       } else {

@@ -122,8 +122,9 @@ export function useImageProcessing(
       const currentPath = selectedImage?.path;
       if (!currentPath) return;
 
-      const payload = JSON.parse(JSON.stringify(currentAdjustments));
+      const payload = structuredClone(currentAdjustments);
       const { patchesSentToBackend } = useEditorStore.getState();
+      const newlySentPatches = new Set<string>();
 
       const processSubMasks = (subMasks: any[]) => {
         if (!Array.isArray(subMasks)) return;
@@ -141,7 +142,7 @@ export function useImageProcessing(
               }
             }
             if (foundMaskData && !patchesSentToBackend.has(sm.id)) {
-              patchesSentToBackend.add(sm.id);
+              newlySentPatches.add(sm.id);
             }
           }
         });
@@ -153,7 +154,7 @@ export function useImageProcessing(
             if (patchesSentToBackend.has(p.id)) {
               p.patchData = null;
             } else {
-              patchesSentToBackend.add(p.id);
+              newlySentPatches.add(p.id);
             }
           }
           if (p.subMasks) processSubMasks(p.subMasks);
@@ -178,6 +179,10 @@ export function useImageProcessing(
           computeWaveform: !!isWaveformVisible,
           activeWaveformChannel: activeWaveformChannelRef.current || null,
         });
+
+        if (newlySentPatches.size > 0) {
+          newlySentPatches.forEach((id) => patchesSentToBackend.add(id));
+        }
 
         if (currentPath !== selectedImagePathRef.current) return;
 
@@ -419,10 +424,9 @@ export function useImageProcessing(
       }
     } else {
       dragIdleTimer.current = setTimeout(() => {
-        const applyRes = Math.max(targetRes, currentResRef.current);
-        currentResRef.current = applyRes;
+        currentResRef.current = targetRes;
 
-        applyAdjustments(adjustments, false, applyRes);
+        applyAdjustments(adjustments, false, targetRes);
         debouncedSave(selectedImage.path, adjustments);
 
         const otherPaths = multiSelectedPaths.filter((p) => p !== selectedImage.path);
