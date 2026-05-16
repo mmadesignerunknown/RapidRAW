@@ -1831,11 +1831,11 @@ fn parse_qualifiers(js_qualifiers: &serde_json::Value) -> ([Qualifier; 8], u32) 
     if let Some(qualifiers_array) = js_qualifiers.as_array() {
         for (i, q) in qualifiers_array.iter().enumerate().take(8) {
             let enabled = q.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true);
-            
+
             let hue = q.get("hue").unwrap_or(&serde_json::Value::Null);
             let sat = q.get("saturation").unwrap_or(&serde_json::Value::Null);
             let lum = q.get("luminance").unwrap_or(&serde_json::Value::Null);
-            
+
             qualifiers[i] = Qualifier {
                 enabled: if enabled { 1 } else { 0 },
                 _pad0: 0,
@@ -1867,7 +1867,7 @@ fn parse_qualifiers(js_qualifiers: &serde_json::Value) -> ([Qualifier; 8], u32) 
             count += 1;
         }
     }
-    
+
     (qualifiers, count)
 }
 
@@ -1969,7 +1969,12 @@ fn get_global_adjustments_from_json(
         (0, 1.0)
     };
 
-    let (qualifiers, qualifier_count) = parse_qualifiers(&js_adjustments.get("qualifiers").cloned().unwrap_or_default());
+    let (qualifiers, qualifier_count) = parse_qualifiers(
+        &js_adjustments
+            .get("qualifiers")
+            .cloned()
+            .unwrap_or_default(),
+    );
 
     GlobalAdjustments {
         exposure: get_val("basic", "exposure", SCALES.exposure, None),
@@ -2186,7 +2191,8 @@ fn get_mask_adjustments_from_json(adj: &serde_json::Value) -> MaskAdjustments {
     };
     let cg_obj = adj.get("colorGrading").cloned().unwrap_or_default();
 
-    let (qualifiers, qualifier_count) = parse_qualifiers(&adj.get("qualifiers").cloned().unwrap_or_default());
+    let (qualifiers, qualifier_count) =
+        parse_qualifiers(&adj.get("qualifiers").cloned().unwrap_or_default());
 
     MaskAdjustments {
         exposure: get_val("basic", "exposure", SCALES.exposure),
