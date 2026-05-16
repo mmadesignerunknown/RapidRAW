@@ -304,59 +304,40 @@ fn get_qualifier_influence(hue: f32, sat: f32, lum: f32, qual: Qualifier) -> f32
     if (qual.enabled == 0u) { return 0.0; }
     
     var hue_influence: f32 = 1.0;
+    let hue_center = (qual.hue.min + qual.hue.max) / 2.0;
     let hue_width = qual.hue.max - qual.hue.min;
+    
     if (hue_width > 0.0) {
-        var hue_dist: f32;
-        if (qual.hue.max < qual.hue.min) {
-            if (hue >= qual.hue.min || hue <= qual.hue.max) {
-                hue_dist = 0.0;
-            } else {
-                let dist_to_min = abs(hue - qual.hue.min);
-                let dist_to_max = abs(hue - qual.hue.max);
-                hue_dist = min(dist_to_min, dist_to_max);
-            }
-        } else {
-            if (hue >= qual.hue.min && hue <= qual.hue.max) {
-                hue_dist = 0.0;
-            } else {
-                let dist_to_min = abs(hue - qual.hue.min);
-                let dist_to_max = abs(hue - qual.hue.max);
-                hue_dist = min(dist_to_min, dist_to_max);
-            }
-        }
-        let falloff = hue_dist / (hue_width * 0.5);
-        let raw = 1.0 - smoothstep(0.0, 1.0, falloff);
-        hue_influence = mix(raw, 1.0, qual.hue.softness);
+        let hue_width_half = hue_width * 0.5;
+        // Handle wrap-around hue (e.g., 350° to 20°)
+        let dist = min(abs(hue - hue_center), 360.0 - abs(hue - hue_center));
+        let falloff = dist / hue_width_half;
+        let raw_influence = exp(-1.5 * falloff * falloff);
+        hue_influence = mix(raw_influence, 1.0, qual.hue.softness);
     }
     
     var sat_influence: f32 = 1.0;
+    let sat_center = (qual.saturation.min + qual.saturation.max) / 2.0;
     let sat_width = qual.saturation.max - qual.saturation.min;
+    
     if (sat_width > 0.0) {
-        if (sat >= qual.saturation.min && sat <= qual.saturation.max) {
-            sat_influence = 1.0;
-        } else {
-            let dist_to_min = abs(sat - qual.saturation.min);
-            let dist_to_max = abs(sat - qual.saturation.max);
-            let sat_dist = min(dist_to_min, dist_to_max);
-            let falloff = sat_dist / (sat_width * 0.5);
-            let raw = 1.0 - smoothstep(0.0, 1.0, falloff);
-            sat_influence = mix(raw, 1.0, qual.saturation.softness);
-        }
+        let sat_width_half = sat_width * 0.5;
+        let dist = abs(sat - sat_center);
+        let falloff = dist / sat_width_half;
+        let raw_influence = exp(-1.5 * falloff * falloff);
+        sat_influence = mix(raw_influence, 1.0, qual.saturation.softness);
     }
     
     var lum_influence: f32 = 1.0;
+    let lum_center = (qual.luminance.min + qual.luminance.max) / 2.0;
     let lum_width = qual.luminance.max - qual.luminance.min;
+    
     if (lum_width > 0.0) {
-        if (lum >= qual.luminance.min && lum <= qual.luminance.max) {
-            lum_influence = 1.0;
-        } else {
-            let dist_to_min = abs(lum - qual.luminance.min);
-            let dist_to_max = abs(lum - qual.luminance.max);
-            let lum_dist = min(dist_to_min, dist_to_max);
-            let falloff = lum_dist / (lum_width * 0.5);
-            let raw = 1.0 - smoothstep(0.0, 1.0, falloff);
-            lum_influence = mix(raw, 1.0, qual.luminance.softness);
-        }
+        let lum_width_half = lum_width * 0.5;
+        let dist = abs(lum - lum_center);
+        let falloff = dist / lum_width_half;
+        let raw_influence = exp(-1.5 * falloff * falloff);
+        lum_influence = mix(raw_influence, 1.0, qual.luminance.softness);
     }
     
     return hue_influence * sat_influence * lum_influence;
