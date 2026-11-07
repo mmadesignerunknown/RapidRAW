@@ -47,12 +47,7 @@ export default function Controls() {
     useWaveformControls();
   const { setAdjustments, handleAutoAdjustments, handleLutSelect, setLutPreviewOverride } = useEditorActions();
 
-  const { appSettings, theme } = useSettingsStore(
-    useShallow((state) => ({
-      appSettings: state.appSettings,
-      theme: state.theme,
-    })),
-  );
+  const appSettings = useSettingsStore((state) => state.appSettings);
 
   const visibleSections = getVisibleAdjustmentSections(appSettings?.adjustmentLayout);
 
@@ -279,11 +274,7 @@ export default function Controls() {
             className="shrink-0 flex flex-col relative border-b border-surface overflow-hidden"
           >
             <div className="grow w-full h-full p-3 pb-2 min-h-0">
-              <ConnectedWaveform
-                setDisplayMode={setActiveWaveformChannel}
-                setAdjustments={setAdjustments}
-                theme={theme}
-              />
+              <ConnectedWaveform setDisplayMode={setActiveWaveformChannel} setAdjustments={setAdjustments} />
             </div>
             <Resizer direction={Orientation.Horizontal} onMouseDown={handleWaveformResize} />
           </motion.div>
@@ -310,7 +301,6 @@ export default function Controls() {
                     activeTools={activeTools}
                     onToggleTool={handleToggleVisibility}
                     setAdjustments={setAdjustments}
-                    theme={theme}
                     handleLutSelect={handleLutSelect}
                     onLutHover={setLutPreviewOverride}
                     appSettings={appSettings}
